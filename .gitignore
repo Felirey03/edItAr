@@ -1,0 +1,26 @@
+# Dependencias
+node_modules/
+demo-app/node_modules/
+
+# Compilaciones y builds
+dist/
+demo-app/.next/
+demo-app/out/
+
+# Archivos de registros y logs
+*.log
+localhost-*.log
+npm-debug.log*
+
+# Configuraciones de agentes y especificaciones internas
+.agents/
+.atl/
+.gemini/
+.vscode/
+.idea/
+openspec/
+.openspec/
+
+# Archivos del sistema operativo
+.DS_Store
+Thumbs.db

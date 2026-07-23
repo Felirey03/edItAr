@@ -1,0 +1,217 @@
+// This script runs inside the Next.js preview page
+(function() {
+  if (window.__visualdev_injected) return;
+  window.__visualdev_injected = true;
+
+  console.log('[VisualDev Client] Injected successfully.');
+
+  let selectedElement = null;
+  let hoverElement = null;
+
+  // Create overlay borders for hover and selection
+  const hoverOutline = document.createElement('div');
+  hoverOutline.style.position = 'absolute';
+  hoverOutline.style.border = '1px solid rgba(37, 99, 235, 0.35)';
+  hoverOutline.style.pointerEvents = 'none';
+  hoverOutline.style.zIndex = '999999';
+  hoverOutline.style.transition = 'all 0.1s ease';
+  hoverOutline.style.display = 'none';
+  document.body.appendChild(hoverOutline);
+
+  const selectOutline = document.createElement('div');
+  selectOutline.style.position = 'absolute';
+  selectOutline.style.border = '2px solid #2563eb';
+  selectOutline.style.pointerEvents = 'none';
+  selectOutline.style.zIndex = '999998';
+  selectOutline.style.display = 'none';
+  document.body.appendChild(selectOutline);
+
+  // Label for selected element
+  const selectLabel = document.createElement('div');
+  selectLabel.style.position = 'absolute';
+  selectLabel.style.background = '#2563eb';
+  selectLabel.style.color = '#fff';
+  selectLabel.style.fontSize = '10px';
+  selectLabel.style.padding = '2px 6px';
+  selectLabel.style.borderRadius = '3px';
+  selectLabel.style.pointerEvents = 'none';
+  selectLabel.style.zIndex = '999999';
+  selectLabel.style.display = 'none';
+  document.body.appendChild(selectLabel);
+
+  function updateOutline(element, outline, label = null) {
+    if (!element) {
+      outline.style.display = 'none';
+      if (label) label.style.display = 'none';
+      return;
+    }
+    const rect = element.getBoundingClientRect();
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+
+    // Offset outline slightly outside the element so we don't cover it
+    outline.style.left = `${rect.left + scrollX - 4}px`;
+    outline.style.top = `${rect.top + scrollY - 4}px`;
+    outline.style.width = `${rect.width + 8}px`;
+    outline.style.height = `${rect.height + 8}px`;
+    outline.style.backgroundColor = 'transparent';
+    outline.style.display = 'block';
+
+    if (label) {
+      const sourceLoc = element.getAttribute('data-source-loc') || '';
+      const filename = sourceLoc.split(':')[0].split('/').pop() || element.tagName.toLowerCase();
+      label.textContent = `${element.tagName.toLowerCase()} (${filename})`;
+      
+      // Place label below if the element is at the very top of the page
+      const labelOffset = (rect.top > 25) ? -22 : (rect.height + 6);
+      label.style.left = `${rect.left + scrollX}px`;
+      label.style.top = `${rect.top + scrollY + labelOffset}px`;
+      label.style.display = 'block';
+    }
+  }
+
+  // Monitor mouse movements for hover styling
+  document.addEventListener('mouseover', (e) => {
+    let el = e.target;
+    // Find closest element with data-source-loc
+    while (el && el !== document.body) {
+      if (el.getAttribute('data-source-loc')) {
+        hoverElement = el;
+        updateOutline(hoverElement, hoverOutline);
+        return;
+      }
+      el = el.parentElement;
+    }
+    hoverOutline.style.display = 'none';
+  }, true);
+
+  // Disable pointer events on links/buttons to prevent navigating away during editing
+  document.addEventListener('click', (e) => {
+    let el = e.target;
+    while (el && el !== document.body) {
+      const sourceLoc = el.getAttribute('data-source-loc');
+      if (sourceLoc) {
+        e.preventDefault();
+        e.stopPropagation();
+
+        selectedElement = el;
+        updateOutline(selectedElement, selectOutline, selectLabel);
+
+        // Build ancestors list
+        const ancestors = [];
+        let curr = el;
+        while (curr && curr !== document.body) {
+          const loc = curr.getAttribute('data-source-loc');
+          ancestors.unshift({
+            tagName: curr.tagName.toLowerCase(),
+            sourceLoc: loc || '',
+            className: curr.className || '',
+            id: curr.id || ''
+          });
+          curr = curr.parentElement;
+        }
+
+        const rect = el.getBoundingClientRect();
+
+        // Send message to parent window (Editor App)
+        window.parent.postMessage({
+          type: 'VISUALDEV_SELECT_ELEMENT',
+          sourceLoc: sourceLoc,
+          className: el.className || '',
+          tagName: el.tagName.toLowerCase(),
+          text: el.innerText || '',
+          rect: {
+            top: rect.top,
+            left: rect.left,
+            width: rect.width,
+            height: rect.height
+          },
+          ancestors: ancestors,
+          styles: {
+            backgroundColor: window.getComputedStyle(el).backgroundColor,
+            color: window.getComputedStyle(el).color,
+          }
+        }, '*');
+        return;
+      }
+      el = el.parentElement;
+    }
+  }, true);
+
+  // Sync positions on scroll or resize
+  window.addEventListener('scroll', () => {
+    updateOutline(hoverElement, hoverOutline);
+    updateOutline(selectedElement, selectOutline, selectLabel);
+  });
+  window.addEventListener('resize', () => {
+    updateOutline(hoverElement, hoverOutline);
+    updateOutline(selectedElement, selectOutline, selectLabel);
+  });
+
+  // Listen for updates from the Editor App
+  window.addEventListener('message', (e) => {
+    if (e.data) {
+      if (e.data.type === 'VISUALDEV_UPDATE_CLASSNAME') {
+        const { sourceLoc, className } = e.data;
+        const el = document.querySelector(`[data-source-loc="${sourceLoc}"]`);
+        if (el) {
+          el.className = className;
+          setTimeout(() => {
+            updateOutline(el, selectOutline, selectLabel);
+          }, 50);
+        }
+      } else if (e.data.type === 'VISUALDEV_UPDATE_TEXT') {
+        const { sourceLoc, text } = e.data;
+        const el = document.querySelector(`[data-source-loc="${sourceLoc}"]`);
+        if (el) {
+          el.innerText = text;
+          setTimeout(() => {
+            updateOutline(el, selectOutline, selectLabel);
+          }, 50);
+        }
+      } else if (e.data.type === 'VISUALDEV_FORCE_SELECT') {
+        const { sourceLoc } = e.data;
+        const targetEl = document.querySelector(`[data-source-loc="${sourceLoc}"]`);
+        if (targetEl) {
+          selectedElement = targetEl;
+          updateOutline(selectedElement, selectOutline, selectLabel);
+
+          // Re-build ancestors
+          const ancestors = [];
+          let curr = selectedElement;
+          while (curr && curr !== document.body) {
+            const loc = curr.getAttribute('data-source-loc');
+            ancestors.unshift({
+              tagName: curr.tagName.toLowerCase(),
+              sourceLoc: loc || '',
+              className: curr.className || '',
+              id: curr.id || ''
+            });
+            curr = curr.parentElement;
+          }
+          
+          const rect = selectedElement.getBoundingClientRect();
+
+          window.parent.postMessage({
+            type: 'VISUALDEV_SELECT_ELEMENT',
+            sourceLoc: sourceLoc,
+            className: selectedElement.className || '',
+            tagName: selectedElement.tagName.toLowerCase(),
+            text: selectedElement.innerText || '',
+            rect: {
+              top: rect.top,
+              left: rect.left,
+              width: rect.width,
+              height: rect.height
+            },
+            ancestors: ancestors,
+            styles: {
+              backgroundColor: window.getComputedStyle(selectedElement).backgroundColor,
+              color: window.getComputedStyle(selectedElement).color,
+            }
+          }, '*');
+        }
+      }
+    }
+  });
+})();
