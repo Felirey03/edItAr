@@ -148,10 +148,40 @@
     updateOutline(selectedElement, selectOutline, selectLabel);
   });
 
+  // Forward keydown events to parent window (Escape, Undo/Redo)
+  document.addEventListener('keydown', (e) => {
+    const activeEl = document.activeElement;
+    if (
+      activeEl &&
+      (activeEl.tagName === 'INPUT' ||
+        activeEl.tagName === 'TEXTAREA' ||
+        activeEl.tagName === 'SELECT' ||
+        activeEl.isContentEditable)
+    ) {
+      if (e.key === 'Escape') {
+        activeEl.blur();
+      }
+      return;
+    }
+
+    if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'z' || e.key.toLowerCase() === 'y'))) {
+      window.parent.postMessage({
+        type: 'VISUALDEV_KEY_DOWN',
+        key: e.key,
+        ctrlKey: e.ctrlKey,
+        metaKey: e.metaKey,
+        shiftKey: e.shiftKey
+      }, '*');
+    }
+  });
+
   // Listen for updates from the Editor App
   window.addEventListener('message', (e) => {
     if (e.data) {
-      if (e.data.type === 'VISUALDEV_UPDATE_CLASSNAME') {
+      if (e.data.type === 'VISUALDEV_CLEAR_SELECTION') {
+        selectedElement = null;
+        updateOutline(null, selectOutline, selectLabel);
+      } else if (e.data.type === 'VISUALDEV_UPDATE_CLASSNAME') {
         const { sourceLoc, className } = e.data;
         const el = document.querySelector(`[data-source-loc="${sourceLoc}"]`);
         if (el) {

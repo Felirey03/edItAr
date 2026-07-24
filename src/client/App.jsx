@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Folder, File, Layers, RefreshCw, Smartphone, Monitor, CheckCircle, HelpCircle, Save, Sliders, Type, Move, Image, Lock, AlertTriangle, PanelLeftClose, PanelLeftOpen, RotateCcw, RotateCw
+  Folder, File, Layers, RefreshCw, Smartphone, Monitor, CheckCircle, HelpCircle, Save, Sliders, Type, Move, Image, Lock, AlertTriangle, PanelLeftClose, PanelLeftOpen, RotateCcw, RotateCw,
+  ChevronDown, ChevronRight, X, AlertCircle
 } from 'lucide-react';
 
 
@@ -192,9 +193,36 @@ export default function App() {
   const [iframeUrl, setIframeUrl] = useState('http://localhost:3000');
   const [selectedElement, setSelectedElement] = useState(null);
   const [parsedClasses, setParsedClasses] = useState(null);
-  const [saving, setSaving] = useState(false);
+  const [saveStatus, setSaveStatus] = useState('idle'); // 'idle' | 'saving' | 'saved' | 'error'
+  const [toasts, setToasts] = useState([]);
+  const [inspectorSections, setInspectorSections] = useState({
+    content: true,
+    layout: true,
+    style: true,
+    typography: true,
+    raw: false
+  });
   const [isIframeLoaded, setIsIframeLoaded] = useState(false);
   const [viewMode, setViewMode] = useState('desktop');
+
+  const addToast = (message, type = 'error') => {
+    const id = Date.now().toString() + Math.random().toString().substring(2, 6);
+    setToasts(prev => [...prev, { id, message, type }]);
+    setTimeout(() => {
+      removeToast(id);
+    }, 4000);
+  };
+
+  const removeToast = (id) => {
+    setToasts(prev => prev.filter(t => t.id !== id));
+  };
+
+  const toggleSection = (sectionKey) => {
+    setInspectorSections(prev => ({
+      ...prev,
+      [sectionKey]: !prev[sectionKey]
+    }));
+  };
 
   // History state stack (max 50)
   const [history, setHistory] = useState({ past: [], present: null, future: [] });
@@ -262,8 +290,9 @@ export default function App() {
     }
 
     // Call AST edit endpoint
+    setSaveStatus('saving');
     try {
-      await fetch('/api/edit-style', {
+      const res = await fetch('/api/edit-style', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
@@ -274,8 +303,18 @@ export default function App() {
           newText: text
         })
       });
+      const data = await res.json();
+      if (data && data.success) {
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2000);
+      } else {
+        setSaveStatus('error');
+        addToast(data?.error || 'Failed to persist AST changes', 'error');
+      }
     } catch (e) {
       console.error('Error applying transaction state:', e);
+      setSaveStatus('error');
+      addToast('Network error while saving AST changes', 'error');
     }
   };
 
@@ -333,10 +372,34 @@ export default function App() {
     await applyTransactionState(redoTransaction, true, isText);
   };
 
-  // Keyboard shortcut listener with focus guarding
+  // Helper to clear selection across parent app and preview iframe
+  const clearSelection = () => {
+    setSelectedElement(null);
+    setParsedClasses(null);
+    if (iframeRef.current && iframeRef.current.contentWindow) {
+      iframeRef.current.contentWindow.postMessage({ type: 'VISUALDEV_CLEAR_SELECTION' }, '*');
+    }
+  };
+
+  // Keyboard shortcut listener with focus guarding & Escape key support
   useEffect(() => {
     const handleKeyDown = (e) => {
       const activeEl = document.activeElement;
+
+      if (e.key === 'Escape') {
+        if (
+          activeEl &&
+          (activeEl.tagName === 'INPUT' ||
+            activeEl.tagName === 'TEXTAREA' ||
+            activeEl.tagName === 'SELECT' ||
+            activeEl.isContentEditable)
+        ) {
+          activeEl.blur();
+        }
+        clearSelection();
+        return;
+      }
+
       if (activeEl) {
         const tagName = activeEl.tagName.toUpperCase();
         if (
@@ -452,12 +515,25 @@ export default function App() {
           .catch(err => {
             console.error('Error analyzing element:', err);
           });
+      } else if (e.data && e.data.type === 'VISUALDEV_KEY_DOWN') {
+        const { key, ctrlKey, metaKey, shiftKey } = e.data;
+        if (key === 'Escape') {
+          clearSelection();
+        } else {
+          const isMac = navigator.platform.toUpperCase().indexOf('MAC') >= 0;
+          const cmdOrCtrl = isMac ? metaKey : ctrlKey;
+          if (cmdOrCtrl && !shiftKey && key.toLowerCase() === 'z') {
+            handleUndo();
+          } else if ((cmdOrCtrl && key.toLowerCase() === 'y') || (cmdOrCtrl && shiftKey && key.toLowerCase() === 'z')) {
+            handleRedo();
+          }
+        }
       }
     };
 
     window.addEventListener('message', handleIframeMessage);
     return () => window.removeEventListener('message', handleIframeMessage);
-  }, []);
+  }, [history]);
 
   // Sync className change with code in background and update local iframe DOM
   const updateStyleClass = async (updatedParsed) => {
@@ -494,6 +570,7 @@ export default function App() {
     setParsedClasses(updatedParsed);
 
     // Call API to write to code
+    setSaveStatus('saving');
     try {
       const res = await fetch('/api/edit-style', {
         method: 'POST',
@@ -506,11 +583,17 @@ export default function App() {
         })
       });
       const data = await res.json();
-      if (!data.success) {
-        console.error('Error writing styles:', data.error);
+      if (data && data.success) {
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2000);
+      } else {
+        setSaveStatus('error');
+        addToast(data?.error || 'Failed to update element style', 'error');
       }
     } catch (error) {
       console.error('Network error writing style:', error);
+      setSaveStatus('error');
+      addToast('Network error while saving style changes', 'error');
     }
   };
 
@@ -522,7 +605,7 @@ export default function App() {
   };
 
   // Manual raw class typing
-  const handleRawClassChange = (e) => {
+  const handleRawClassChange = async (e) => {
     const rawVal = e.target.value;
     const prevClassString = selectedElement ? selectedElement.className : '';
     const parsed = parseTailwindClasses(rawVal);
@@ -554,16 +637,31 @@ export default function App() {
 
     // Call api to write to file
     if (selectedElement) {
-      fetch('/api/edit-style', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          file: selectedElement.file,
-          line: selectedElement.line,
-          column: selectedElement.column,
-          newClasses: rawVal
-        })
-      }).catch(e => console.error(e));
+      setSaveStatus('saving');
+      try {
+        const res = await fetch('/api/edit-style', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            file: selectedElement.file,
+            line: selectedElement.line,
+            column: selectedElement.column,
+            newClasses: rawVal
+          })
+        });
+        const data = await res.json();
+        if (data && data.success) {
+          setSaveStatus('saved');
+          setTimeout(() => setSaveStatus('idle'), 2000);
+        } else {
+          setSaveStatus('error');
+          addToast(data?.error || 'Failed to write raw classes', 'error');
+        }
+      } catch (err) {
+        console.error('Error in handleRawClassChange:', err);
+        setSaveStatus('error');
+        addToast('Network error while saving raw classes', 'error');
+      }
     }
   };
 
@@ -596,6 +694,7 @@ export default function App() {
       }, '*');
     }
 
+    setSaveStatus('saving');
     try {
       const res = await fetch('/api/edit-style', {
         method: 'POST',
@@ -609,11 +708,17 @@ export default function App() {
         })
       });
       const data = await res.json();
-      if (!data.success) {
-        console.error('Error writing text content:', data.error);
+      if (data && data.success) {
+        setSaveStatus('saved');
+        setTimeout(() => setSaveStatus('idle'), 2000);
+      } else {
+        setSaveStatus('error');
+        addToast(data?.error || 'Failed to write text content', 'error');
       }
     } catch (error) {
       console.error('Network error writing text:', error);
+      setSaveStatus('error');
+      addToast('Network error while saving text content', 'error');
     }
   };
 
@@ -666,11 +771,13 @@ export default function App() {
       <header className="app-header">
         {/* Left Section: Branding, Sidebar Toggle & Undo/Redo */}
         <div className="logo-section">
-          <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-            <polygon points="12 2 2 7 12 12 22 7 12 2" />
-            <polyline points="2 17 12 22 22 17" />
-            <polyline points="2 12 12 17 22 12" />
-          </svg>
+          <img 
+            src="/assets/editar_logo.png" 
+            alt="edItAr Logo" 
+            width="24" 
+            height="24" 
+            style={{ objectFit: 'contain', borderRadius: '4px' }} 
+          />
           <span className="logo-title">
             ed<span style={{ color: 'var(--text-primary)', fontWeight: 800 }}>I</span>t<span style={{ color: 'var(--text-primary)', fontWeight: 800 }}>A</span>r
           </span>
@@ -678,6 +785,8 @@ export default function App() {
             onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)} 
             className="sidebar-toggle-btn"
             title={isSidebarCollapsed ? "Expandir barra lateral" : "Colapsar barra lateral"}
+            aria-label={isSidebarCollapsed ? "Expandir barra lateral" : "Colapsar barra lateral"}
+            aria-expanded={!isSidebarCollapsed}
           >
             {isSidebarCollapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
           </button>
@@ -689,6 +798,7 @@ export default function App() {
               disabled={history.past.length === 0}
               style={{ opacity: history.past.length === 0 ? 0.3 : 1, cursor: history.past.length === 0 ? 'not-allowed' : 'pointer' }}
               title="Deshacer (Ctrl+Z)"
+              aria-label="Deshacer cambios"
             >
               <RotateCcw size={15} />
             </button>
@@ -698,9 +808,21 @@ export default function App() {
               disabled={history.future.length === 0}
               style={{ opacity: history.future.length === 0 ? 0.3 : 1, cursor: history.future.length === 0 ? 'not-allowed' : 'pointer' }}
               title="Rehacer (Ctrl+Y / Cmd+Shift+Z)"
+              aria-label="Rehacer cambios"
             >
               <RotateCw size={15} />
             </button>
+          </div>
+
+          {/* AST Save Status Badge */}
+          <div className="status-badge" aria-live="polite" aria-label={`Estado de guardado: ${saveStatus}`}>
+            <span className={`status-dot ${saveStatus}`} />
+            <span>
+              {saveStatus === 'idle' && 'Listo'}
+              {saveStatus === 'saving' && 'Guardando...'}
+              {saveStatus === 'saved' && 'Guardado'}
+              {saveStatus === 'error' && 'Error al guardar'}
+            </span>
           </div>
         </div>
 
@@ -712,8 +834,9 @@ export default function App() {
             value={targetUrl} 
             onChange={(e) => setTargetUrl(e.target.value)}
             onKeyDown={(e) => e.key === 'Enter' && setIframeUrl(targetUrl)}
+            aria-label="Dirección URL de la vista previa"
           />
-          <button onClick={reloadPreview} className="sidebar-toggle-btn" style={{ padding: '4px', cursor: 'pointer' }} title="Recargar vista previa">
+          <button onClick={reloadPreview} className="sidebar-toggle-btn" style={{ padding: '4px', cursor: 'pointer' }} title="Recargar vista previa" aria-label="Recargar vista previa">
             <RefreshCw size={13} className={!isIframeLoaded ? 'spin' : ''} />
           </button>
         </div>
@@ -725,6 +848,8 @@ export default function App() {
               className={`tab-button ${activeTab === 'visual' ? 'active' : ''}`} 
               onClick={() => setActiveTab('visual')}
               style={{ padding: '4px 10px', fontSize: '12px' }}
+              aria-label="Ver Lienzo Visual"
+              aria-selected={activeTab === 'visual'}
             >
               Lienzo Visual
             </button>
@@ -732,6 +857,8 @@ export default function App() {
               className={`tab-button ${activeTab === 'code' ? 'active' : ''}`} 
               onClick={() => setActiveTab('code')}
               style={{ padding: '4px 10px', fontSize: '12px' }}
+              aria-label="Ver Código"
+              aria-selected={activeTab === 'code'}
             >
               Ver Código
             </button>
@@ -742,6 +869,7 @@ export default function App() {
               className={`sidebar-toggle-btn ${viewMode === 'mobile' ? 'active' : ''}`}
               onClick={() => setViewMode('mobile')}
               title="Vista Mobile"
+              aria-label="Cambiar a vista móvil"
             >
               <Smartphone size={15} />
             </button>
@@ -749,6 +877,7 @@ export default function App() {
               className={`sidebar-toggle-btn ${viewMode === 'desktop' ? 'active' : ''}`}
               onClick={() => setViewMode('desktop')}
               title="Vista Desktop"
+              aria-label="Cambiar a vista escritorio"
             >
               <Monitor size={15} />
             </button>
@@ -829,7 +958,7 @@ export default function App() {
                           paddingLeft: `${indent + 10}px`, 
                           fontWeight: isLast ? 'bold' : 'normal',
                           backgroundColor: isLast ? 'var(--accent-light)' : 'transparent',
-                          color: isLast ? '#fff' : 'var(--text-secondary)'
+                          color: isLast ? 'var(--text-primary)' : 'var(--text-secondary)'
                         }}
                         onClick={() => {
                           if (ancestor.sourceLoc) {
@@ -903,6 +1032,8 @@ export default function App() {
                       className={`floating-toolbar-btn ${parsedClasses.fontWeight === 'font-bold' ? 'active' : ''}`}
                       onClick={() => handleStyleChange('fontWeight', parsedClasses.fontWeight === 'font-bold' ? '' : 'font-bold')}
                       title="Negrita"
+                      aria-label="Negrita"
+                      aria-pressed={parsedClasses.fontWeight === 'font-bold'}
                     >
                       B
                     </button>
@@ -912,6 +1043,8 @@ export default function App() {
                       className={`floating-toolbar-btn ${parsedClasses.fontWeight === 'italic' ? 'active' : ''}`}
                       onClick={() => handleStyleChange('fontWeight', parsedClasses.fontWeight === 'italic' ? '' : 'italic')}
                       title="Cursiva"
+                      aria-label="Cursiva"
+                      aria-pressed={parsedClasses.fontWeight === 'italic'}
                     >
                       I
                     </button>
@@ -921,6 +1054,7 @@ export default function App() {
                       className="floating-toolbar-select"
                       value={parsedClasses.textSize}
                       onChange={(e) => handleStyleChange('textSize', e.target.value)}
+                      aria-label="Tamaño de texto"
                     >
                       <option value="">Tamaño</option>
                       {['text-xs', 'text-sm', 'text-base', 'text-lg', 'text-xl', 'text-2xl', 'text-3xl', 'text-4xl', 'text-5xl'].map(v => (
@@ -937,6 +1071,8 @@ export default function App() {
                           className={`floating-toolbar-btn ${parsedClasses.textAlign === `text-${align}` ? 'active' : ''}`}
                           onClick={() => handleStyleChange('textAlign', parsedClasses.textAlign === `text-${align}` ? '' : `text-${align}`)}
                           title={`Alinear a la ${align === 'left' ? 'izquierda' : align === 'center' ? 'centro' : 'derecha'}`}
+                          aria-label={`Alinear a la ${align === 'left' ? 'izquierda' : align === 'center' ? 'centro' : 'derecha'}`}
+                          aria-pressed={parsedClasses.textAlign === `text-${align}`}
                         >
                           {align === 'left' ? 'L' : align === 'center' ? 'C' : 'R'}
                         </button>
@@ -951,6 +1087,7 @@ export default function App() {
                         value={parsedClasses.bg}
                         onChange={(e) => handleStyleChange('bg', e.target.value)}
                         title="Fondo"
+                        aria-label="Color de fondo rápido"
                       >
                         <option value="">Fondo</option>
                         {['bg-transparent', 'bg-white', 'bg-black', 'bg-slate-100', 'bg-slate-800', 'bg-red-500', 'bg-green-500', 'bg-blue-500', 'bg-indigo-500', 'bg-purple-500'].map(v => (
@@ -963,6 +1100,7 @@ export default function App() {
                         value={parsedClasses.textColor}
                         onChange={(e) => handleStyleChange('textColor', e.target.value)}
                         title="Texto"
+                        aria-label="Color de texto rápido"
                       >
                         <option value="">Texto</option>
                         {['text-white', 'text-black', 'text-slate-400', 'text-red-500', 'text-green-500', 'text-blue-500', 'text-indigo-500'].map(v => (
@@ -1020,342 +1158,346 @@ export default function App() {
 
           {selectedElement && parsedClasses ? (
             <>
-              {/* Text Content Editor */}
+              {/* Accordion 1: Text Content Editor */}
               {['h1', 'h2', 'h3', 'h4', 'h5', 'h6', 'p', 'span', 'button', 'a', 'div'].includes(selectedElement.tagName) && (
                 <div className="inspector-section">
-                  <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                    Contenido del Texto
-                    {isTextLocked && (
-                      <span className="lock-tooltip-container">
-                        <Lock size={12} style={{ color: 'var(--warning-color)' }} />
-                        <span className="tooltip-text">Texto bloqueado: contiene expresiones o nodos dinámicos.</span>
-                      </span>
-                    )}
-                  </h3>
-                  <div className="input-group">
-                    <textarea 
-                      className="class-textarea" 
-                      style={{ height: '60px', fontFamily: 'sans-serif' }}
-                      value={selectedElement.text || ''} 
-                      onChange={(e) => handleTextChange(e.target.value)}
-                      disabled={isTextLocked}
-                      placeholder={isTextLocked ? "El contenido del texto no se puede editar debido a código dinámico..." : "Escribe el contenido del texto..."}
-                    />
-                  </div>
+                  <button 
+                    className="accordion-header"
+                    onClick={() => toggleSection('content')}
+                    aria-expanded={inspectorSections.content}
+                    aria-label="Sección Contenido del Texto"
+                  >
+                    <h3 className="accordion-title">
+                      Contenido del Texto
+                      {isTextLocked && (
+                        <span className="lock-tooltip-container">
+                          <Lock size={12} style={{ color: 'var(--warning-color)' }} />
+                          <span className="tooltip-text">Texto bloqueado: contiene expresiones o nodos dinámicos.</span>
+                        </span>
+                      )}
+                    </h3>
+                    <div className="accordion-icon">
+                      {inspectorSections.content ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                    </div>
+                  </button>
+                  {inspectorSections.content && (
+                    <div className="accordion-content">
+                      <div className="input-group">
+                        <textarea 
+                          className="class-textarea" 
+                          style={{ height: '60px', fontFamily: 'sans-serif' }}
+                          value={selectedElement.text || ''} 
+                          onChange={(e) => handleTextChange(e.target.value)}
+                          disabled={isTextLocked}
+                          aria-label="Contenido del Texto"
+                          placeholder={isTextLocked ? "El contenido del texto no se puede editar debido a código dinámico..." : "Escribe el contenido del texto..."}
+                        />
+                      </div>
+                    </div>
+                  )}
                 </div>
               )}
 
-              {/* Spacing (Padding/Margin) */}
+              {/* Accordion 2: Spacing (Padding/Margin) */}
               <div className="inspector-section">
-                <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  Espaciado (Padding & Margin)
-                  {isClassNameLocked && (
-                    <span className="lock-tooltip-container">
-                      <Lock size={12} style={{ color: 'var(--warning-color)' }} />
-                      <span className="tooltip-text">Estilos bloqueados: className contiene código dinámico.</span>
-                    </span>
-                  )}
-                </h3>
-                
-                <div className="input-grid" style={{ marginBottom: '0.75rem' }}>
-                  <div className="input-group">
-                    <label>Padding (General)</label>
-                    <select 
-                      className="select-field" 
-                      value={parsedClasses.padding} 
-                      disabled={isClassNameLocked}
-                      onChange={(e) => handleStyleChange('padding', e.target.value)}
-                    >
-                      <option value="">Ninguno</option>
-                      {['p-0', 'p-1', 'p-2', 'p-3', 'p-4', 'p-5', 'p-6', 'p-8', 'p-10', 'p-12', 'p-16'].map(v => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
+                <button 
+                  className="accordion-header"
+                  onClick={() => toggleSection('style')}
+                  aria-expanded={inspectorSections.style}
+                  aria-label="Sección Espaciado (Padding & Margin)"
+                >
+                  <h3 className="accordion-title">
+                    Espaciado (Padding & Margin)
+                    {isClassNameLocked && (
+                      <span className="lock-tooltip-container">
+                        <Lock size={12} style={{ color: 'var(--warning-color)' }} />
+                        <span className="tooltip-text">Estilos bloqueados: className contiene código dinámico.</span>
+                      </span>
+                    )}
+                  </h3>
+                  <div className="accordion-icon">
+                    {inspectorSections.style ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
                   </div>
-                  <div className="input-group">
-                    <label>Margin (General)</label>
-                    <select 
-                      className="select-field" 
-                      value={parsedClasses.margin} 
-                      disabled={isClassNameLocked}
-                      onChange={(e) => handleStyleChange('margin', e.target.value)}
-                    >
-                      <option value="">Ninguno</option>
-                      {['m-0', 'm-1', 'm-2', 'm-3', 'm-4', 'm-5', 'm-6', 'm-8', 'm-10', 'm-12', 'm-16', 'm-auto'].map(v => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                </button>
+                {inspectorSections.style && (
+                  <div className="accordion-content">
+                    <div className="input-grid" style={{ marginBottom: '0.75rem' }}>
+                      <div className="input-group">
+                        <label>Padding (General)</label>
+                        <select 
+                          className="select-field" 
+                          value={parsedClasses.padding} 
+                          disabled={isClassNameLocked}
+                          onChange={(e) => handleStyleChange('padding', e.target.value)}
+                          aria-label="Padding General"
+                        >
+                          <option value="">Ninguno</option>
+                          {['p-0', 'p-1', 'p-2', 'p-3', 'p-4', 'p-5', 'p-6', 'p-8', 'p-10', 'p-12', 'p-16'].map(v => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="input-group">
+                        <label>Margin (General)</label>
+                        <select 
+                          className="select-field" 
+                          value={parsedClasses.margin} 
+                          disabled={isClassNameLocked}
+                          onChange={(e) => handleStyleChange('margin', e.target.value)}
+                          aria-label="Margin General"
+                        >
+                          <option value="">Ninguno</option>
+                          {['m-0', 'm-1', 'm-2', 'm-3', 'm-4', 'm-5', 'm-6', 'm-8', 'm-10', 'm-12', 'm-16', 'm-auto'].map(v => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
 
-                <div className="input-grid">
-                  <div className="input-group">
-                    <label>Padding X (Eje X)</label>
-                    <select 
-                      className="select-field" 
-                      value={parsedClasses.paddingX} 
-                      disabled={isClassNameLocked}
-                      onChange={(e) => handleStyleChange('paddingX', e.target.value)}
-                    >
-                      <option value="">Defecto</option>
-                      {['px-0', 'px-1', 'px-2', 'px-3', 'px-4', 'px-5', 'px-6', 'px-8', 'px-10', 'px-12', 'px-16'].map(v => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
+                    <div className="input-grid">
+                      <div className="input-group">
+                        <label>Padding X (Eje X)</label>
+                        <select 
+                          className="select-field" 
+                          value={parsedClasses.paddingX} 
+                          disabled={isClassNameLocked}
+                          onChange={(e) => handleStyleChange('paddingX', e.target.value)}
+                          aria-label="Padding X"
+                        >
+                          <option value="">Defecto</option>
+                          {['px-0', 'px-1', 'px-2', 'px-3', 'px-4', 'px-5', 'px-6', 'px-8', 'px-10', 'px-12', 'px-16'].map(v => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="input-group">
+                        <label>Padding Y (Eje Y)</label>
+                        <select 
+                          className="select-field" 
+                          value={parsedClasses.paddingY} 
+                          disabled={isClassNameLocked}
+                          onChange={(e) => handleStyleChange('paddingY', e.target.value)}
+                          aria-label="Padding Y"
+                        >
+                          <option value="">Defecto</option>
+                          {['py-0', 'py-1', 'py-2', 'py-3', 'py-4', 'py-5', 'py-6', 'py-8', 'py-10', 'py-12', 'py-16'].map(v => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
                   </div>
-                  <div className="input-group">
-                    <label>Padding Y (Eje Y)</label>
-                    <select 
-                      className="select-field" 
-                      value={parsedClasses.paddingY} 
-                      disabled={isClassNameLocked}
-                      onChange={(e) => handleStyleChange('paddingY', e.target.value)}
-                    >
-                      <option value="">Defecto</option>
-                      {['py-0', 'py-1', 'py-2', 'py-3', 'py-4', 'py-5', 'py-6', 'py-8', 'py-10', 'py-12', 'py-16'].map(v => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                )}
               </div>
 
-              {/* Background & Borders */}
+              {/* Accordion 3: Background & Borders */}
               <div className="inspector-section">
-                <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  Color de Fondo y Bordes
-                  {isClassNameLocked && (
-                    <span className="lock-tooltip-container">
-                      <Lock size={12} style={{ color: 'var(--warning-color)' }} />
-                      <span className="tooltip-text">Estilos bloqueados: className contiene código dinámico.</span>
-                    </span>
-                  )}
-                </h3>
-                
-                <div className="input-group" style={{ marginBottom: '0.75rem' }}>
-                  <label>Color de Fondo (Tailwind)</label>
-                  <select 
-                    className="select-field" 
-                    value={parsedClasses.bg} 
-                    disabled={isClassNameLocked}
-                    onChange={(e) => handleStyleChange('bg', e.target.value)}
-                  >
-                    <option value="">Sin fondo</option>
-                    {Array.from(new Set([
-                      ...Object.keys(customTheme.colors || {}).flatMap(c => {
-                        const val = customTheme.colors[c];
-                        if (typeof val === 'object' && val !== null) {
-                          return Object.keys(val).map(sub => `bg-${c}-${sub}`);
-                        }
-                        return [`bg-${c}`];
-                      }),
-                      'bg-transparent', 'bg-white', 'bg-black',
-                      'bg-slate-50', 'bg-slate-100', 'bg-slate-200', 'bg-slate-500', 'bg-slate-800', 'bg-slate-900',
-                      'bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-yellow-500',
-                      'bg-green-500', 'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500',
-                      'bg-blue-500', 'bg-indigo-500', 'bg-purple-500', 'bg-pink-500'
-                    ])).map(v => (
-                      <option key={v} value={v}>{v}</option>
-                    ))}
-                  </select>
-                </div>
+                <button 
+                  className="accordion-header"
+                  onClick={() => toggleSection('layout')}
+                  aria-expanded={inspectorSections.layout}
+                  aria-label="Sección Color de Fondo y Bordes"
+                >
+                  <h3 className="accordion-title">
+                    Color de Fondo y Bordes
+                    {isClassNameLocked && (
+                      <span className="lock-tooltip-container">
+                        <Lock size={12} style={{ color: 'var(--warning-color)' }} />
+                        <span className="tooltip-text">Estilos bloqueados: className contiene código dinámico.</span>
+                      </span>
+                    )}
+                  </h3>
+                  <div className="accordion-icon">
+                    {inspectorSections.layout ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </div>
+                </button>
+                {inspectorSections.layout && (
+                  <div className="accordion-content">
+                    <div className="input-group" style={{ marginBottom: '0.75rem' }}>
+                      <label>Color de Fondo (Tailwind)</label>
+                      <select 
+                        className="select-field" 
+                        value={parsedClasses.bg} 
+                        disabled={isClassNameLocked}
+                        onChange={(e) => handleStyleChange('bg', e.target.value)}
+                        aria-label="Color de fondo"
+                      >
+                        <option value="">Sin fondo</option>
+                        {Array.from(new Set([
+                          ...Object.keys(customTheme.colors || {}).flatMap(c => {
+                            const val = customTheme.colors[c];
+                            if (typeof val === 'object' && val !== null) {
+                              return Object.keys(val).map(sub => `bg-${c}-${sub}`);
+                            }
+                            return [`bg-${c}`];
+                          }),
+                          'bg-transparent', 'bg-white', 'bg-black',
+                          'bg-slate-50', 'bg-slate-100', 'bg-slate-200', 'bg-slate-500', 'bg-slate-800', 'bg-slate-900',
+                          'bg-red-500', 'bg-orange-500', 'bg-amber-500', 'bg-yellow-500',
+                          'bg-green-500', 'bg-emerald-500', 'bg-teal-500', 'bg-cyan-500',
+                          'bg-blue-500', 'bg-indigo-500', 'bg-purple-500', 'bg-pink-500'
+                        ])).map(v => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                    </div>
 
-                <div className="input-grid">
-                  <div className="input-group">
-                    <label>Esquinas (Round)</label>
-                    <select 
-                      className="select-field" 
-                      value={parsedClasses.rounded} 
-                      disabled={isClassNameLocked}
-                      onChange={(e) => handleStyleChange('rounded', e.target.value)}
-                    >
-                      <option value="">Esquinas rectas</option>
-                      {['rounded-none', 'rounded-sm', 'rounded', 'rounded-md', 'rounded-lg', 'rounded-xl', 'rounded-2xl', 'rounded-3xl', 'rounded-full'].map(v => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
+                    <div className="input-grid">
+                      <div className="input-group">
+                        <label>Esquinas (Round)</label>
+                        <select 
+                          className="select-field" 
+                          value={parsedClasses.rounded} 
+                          disabled={isClassNameLocked}
+                          onChange={(e) => handleStyleChange('rounded', e.target.value)}
+                          aria-label="Redondeo de esquinas"
+                        >
+                          <option value="">Esquinas rectas</option>
+                          {['rounded-none', 'rounded-sm', 'rounded', 'rounded-md', 'rounded-lg', 'rounded-xl', 'rounded-2xl', 'rounded-3xl', 'rounded-full'].map(v => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="input-group">
+                        <label>Grosor de Borde</label>
+                        <select 
+                          className="select-field" 
+                          value={parsedClasses.borderWidth} 
+                          disabled={isClassNameLocked}
+                          onChange={(e) => handleStyleChange('borderWidth', e.target.value)}
+                          aria-label="Grosor de borde"
+                        >
+                          <option value="">Sin Borde</option>
+                          {['border-0', 'border', 'border-2', 'border-4', 'border-8'].map(v => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
                   </div>
-                  <div className="input-group">
-                    <label>Grosor de Borde</label>
-                    <select 
-                      className="select-field" 
-                      value={parsedClasses.borderWidth} 
-                      disabled={isClassNameLocked}
-                      onChange={(e) => handleStyleChange('borderWidth', e.target.value)}
-                    >
-                      <option value="">Sin Borde</option>
-                      {['border-0', 'border', 'border-2', 'border-4', 'border-8'].map(v => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                )}
               </div>
 
-              {/* Typography */}
+              {/* Accordion 4: Typography */}
               <div className="inspector-section">
-                <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  Tipografía
-                  {isClassNameLocked && (
-                    <span className="lock-tooltip-container">
-                      <Lock size={12} style={{ color: 'var(--warning-color)' }} />
-                      <span className="tooltip-text">Estilos bloqueados: className contiene código dinámico.</span>
-                    </span>
-                  )}
-                </h3>
-                
-                <div className="input-group" style={{ marginBottom: '0.75rem' }}>
-                  <label>Color de Texto</label>
-                  <select 
-                    className="select-field" 
-                    value={parsedClasses.textColor} 
-                    disabled={isClassNameLocked}
-                    onChange={(e) => handleStyleChange('textColor', e.target.value)}
-                  >
-                    <option value="">Defecto</option>
-                    {Array.from(new Set([
-                      ...Object.keys(customTheme.colors || {}).flatMap(c => {
-                        const val = customTheme.colors[c];
-                        if (typeof val === 'object' && val !== null) {
-                          return Object.keys(val).map(sub => `text-${c}-${sub}`);
-                        }
-                        return [`text-${c}`];
-                      }),
-                      'text-white', 'text-black', 'text-slate-200', 'text-slate-400', 'text-slate-600',
-                      'text-red-500', 'text-orange-500', 'text-yellow-500', 'text-green-500',
-                      'text-blue-500', 'text-indigo-500', 'text-purple-500', 'text-pink-500'
-                    ])).map(v => (
-                      <option key={v} value={v}>{v}</option>
-                    ))}
-                  </select>
-                </div>
+                <button 
+                  className="accordion-header"
+                  onClick={() => toggleSection('typography')}
+                  aria-expanded={inspectorSections.typography}
+                  aria-label="Sección Tipografía"
+                >
+                  <h3 className="accordion-title">
+                    Tipografía
+                    {isClassNameLocked && (
+                      <span className="lock-tooltip-container">
+                        <Lock size={12} style={{ color: 'var(--warning-color)' }} />
+                        <span className="tooltip-text">Estilos bloqueados: className contiene código dinámico.</span>
+                      </span>
+                    )}
+                  </h3>
+                  <div className="accordion-icon">
+                    {inspectorSections.typography ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </div>
+                </button>
+                {inspectorSections.typography && (
+                  <div className="accordion-content">
+                    <div className="input-group" style={{ marginBottom: '0.75rem' }}>
+                      <label>Color de Texto</label>
+                      <select 
+                        className="select-field" 
+                        value={parsedClasses.textColor} 
+                        disabled={isClassNameLocked}
+                        onChange={(e) => handleStyleChange('textColor', e.target.value)}
+                        aria-label="Color de texto"
+                      >
+                        <option value="">Defecto</option>
+                        {Array.from(new Set([
+                          ...Object.keys(customTheme.colors || {}).flatMap(c => {
+                            const val = customTheme.colors[c];
+                            if (typeof val === 'object' && val !== null) {
+                              return Object.keys(val).map(sub => `text-${c}-${sub}`);
+                            }
+                            return [`text-${c}`];
+                          }),
+                          'text-white', 'text-black', 'text-slate-200', 'text-slate-400', 'text-slate-600',
+                          'text-red-500', 'text-orange-500', 'text-yellow-500', 'text-green-500',
+                          'text-blue-500', 'text-indigo-500', 'text-purple-500', 'text-pink-500'
+                        ])).map(v => (
+                          <option key={v} value={v}>{v}</option>
+                        ))}
+                      </select>
+                    </div>
 
-                <div className="input-grid">
-                  <div className="input-group">
-                    <label>Tamaño</label>
-                    <select 
-                      className="select-field" 
-                      value={parsedClasses.textSize} 
-                      disabled={isClassNameLocked}
-                      onChange={(e) => handleStyleChange('textSize', e.target.value)}
-                    >
-                      <option value="">Medio (Normal)</option>
-                      {['text-xs', 'text-sm', 'text-base', 'text-lg', 'text-xl', 'text-2xl', 'text-3xl', 'text-4xl', 'text-5xl'].map(v => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
+                    <div className="input-grid">
+                      <div className="input-group">
+                        <label>Tamaño</label>
+                        <select 
+                          className="select-field" 
+                          value={parsedClasses.textSize} 
+                          disabled={isClassNameLocked}
+                          onChange={(e) => handleStyleChange('textSize', e.target.value)}
+                          aria-label="Tamaño de texto"
+                        >
+                          <option value="">Medio (Normal)</option>
+                          {['text-xs', 'text-sm', 'text-base', 'text-lg', 'text-xl', 'text-2xl', 'text-3xl', 'text-4xl', 'text-5xl'].map(v => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                      </div>
+                      <div className="input-group">
+                        <label>Grosor</label>
+                        <select 
+                          className="select-field" 
+                          value={parsedClasses.fontWeight} 
+                          disabled={isClassNameLocked}
+                          onChange={(e) => handleStyleChange('fontWeight', e.target.value)}
+                          aria-label="Grosor de texto"
+                        >
+                          <option value="">Defecto</option>
+                          {['font-light', 'font-normal', 'font-medium', 'font-semibold', 'font-bold', 'font-black'].map(v => (
+                            <option key={v} value={v}>{v}</option>
+                          ))}
+                        </select>
+                      </div>
+                    </div>
                   </div>
-                  <div className="input-group">
-                    <label>Grosor</label>
-                    <select 
-                      className="select-field" 
-                      value={parsedClasses.fontWeight} 
-                      disabled={isClassNameLocked}
-                      onChange={(e) => handleStyleChange('fontWeight', e.target.value)}
-                    >
-                      <option value="">Defecto</option>
-                      {['font-light', 'font-normal', 'font-medium', 'font-semibold', 'font-bold', 'font-black'].map(v => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
+                )}
               </div>
 
-              {/* Flexbox / Grid Layout */}
-              <div className="inspector-section">
-                <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  Disposición (Layout)
-                  {isClassNameLocked && (
-                    <span className="lock-tooltip-container">
-                      <Lock size={12} style={{ color: 'var(--warning-color)' }} />
-                      <span className="tooltip-text">Estilos bloqueados: className contiene código dinámico.</span>
-                    </span>
-                  )}
-                </h3>
-                
-                <div className="input-grid" style={{ marginBottom: '0.75rem' }}>
-                  <div className="input-group">
-                    <label>Visualización</label>
-                    <select 
-                      className="select-field" 
-                      value={parsedClasses.display} 
+              {/* Accordion 5: Raw Classes */}
+              <div className="inspector-section" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                <button 
+                  className="accordion-header"
+                  onClick={() => toggleSection('raw')}
+                  aria-expanded={inspectorSections.raw}
+                  aria-label="Sección Clases de Tailwind Directo"
+                >
+                  <h3 className="accordion-title">
+                    Clases de Tailwind (Directo)
+                    {isClassNameLocked && (
+                      <span className="lock-tooltip-container">
+                        <Lock size={12} style={{ color: 'var(--warning-color)' }} />
+                        <span className="tooltip-text">Estilos bloqueados: className contiene código dinámico.</span>
+                      </span>
+                    )}
+                  </h3>
+                  <div className="accordion-icon">
+                    {inspectorSections.raw ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  </div>
+                </button>
+                {inspectorSections.raw && (
+                  <div className="accordion-content" style={{ flex: 1, display: 'flex', flexDirection: 'column' }}>
+                    <textarea 
+                      className="class-textarea" 
+                      value={selectedElement.className} 
+                      onChange={handleRawClassChange}
                       disabled={isClassNameLocked}
-                      onChange={(e) => handleStyleChange('display', e.target.value)}
-                    >
-                      <option value="">Defecto</option>
-                      {['block', 'flex', 'grid', 'inline-block', 'hidden'].map(v => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
+                      style={{ flex: 1, minHeight: '80px' }}
+                      aria-label="Clases de Tailwind Directas"
+                      placeholder={isClassNameLocked ? "Las clases no se pueden editar debido a expresiones dinámicas..." : "Escribe clases personalizadas aquí..."}
+                    />
                   </div>
-                  <div className="input-group">
-                    <label>Dirección Flex</label>
-                    <select 
-                      className="select-field" 
-                      value={parsedClasses.flexDir} 
-                      disabled={isClassNameLocked || parsedClasses.display !== 'flex'}
-                      onChange={(e) => handleStyleChange('flexDir', e.target.value)}
-                    >
-                      <option value="">Defecto</option>
-                      {['flex-row', 'flex-col', 'flex-row-reverse', 'flex-col-reverse'].map(v => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-
-                <div className="input-grid">
-                  <div className="input-group">
-                    <label>Alineación (Items)</label>
-                    <select 
-                      className="select-field" 
-                      value={parsedClasses.alignItems} 
-                      disabled={isClassNameLocked || (parsedClasses.display !== 'flex' && parsedClasses.display !== 'grid')}
-                      onChange={(e) => handleStyleChange('alignItems', e.target.value)}
-                    >
-                      <option value="">Defecto</option>
-                      {['items-start', 'items-center', 'items-end', 'items-stretch'].map(v => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
-                  </div>
-                  <div className="input-group">
-                    <label>Espacio (Gap)</label>
-                    <select 
-                      className="select-field" 
-                      value={parsedClasses.gap} 
-                      disabled={isClassNameLocked || (parsedClasses.display !== 'flex' && parsedClasses.display !== 'grid')}
-                      onChange={(e) => handleStyleChange('gap', e.target.value)}
-                    >
-                      <option value="">Ninguno</option>
-                      {['gap-1', 'gap-2', 'gap-3', 'gap-4', 'gap-6', 'gap-8', 'gap-12'].map(v => (
-                        <option key={v} value={v}>{v}</option>
-                      ))}
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              {/* Raw Classes */}
-              <div className="inspector-section" style={{ flex: 1, display: 'flex', flexDirection: 'column', minHeight: '140px' }}>
-                <h3 className="section-title" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
-                  Clases de Tailwind (Directo)
-                  {isClassNameLocked && (
-                    <span className="lock-tooltip-container">
-                      <Lock size={12} style={{ color: 'var(--warning-color)' }} />
-                      <span className="tooltip-text">Estilos bloqueados: className contiene código dinámico.</span>
-                    </span>
-                  )}
-                </h3>
-                <textarea 
-                  className="class-textarea" 
-                  value={selectedElement.className} 
-                  onChange={handleRawClassChange}
-                  disabled={isClassNameLocked}
-                  style={{ flex: 1 }}
-                  placeholder={isClassNameLocked ? "Las clases no se pueden editar debido a expresiones dinámicas..." : "Escribe clases personalizadas aquí..."}
-                />
+                )}
               </div>
             </>
           ) : (
@@ -1366,6 +1508,29 @@ export default function App() {
           )}
         </aside>
       </main>
+
+      {/* Toast Notification Container */}
+      {toasts.length > 0 && (
+        <div className="toast-container" aria-live="assertive" role="alert">
+          {toasts.map(toast => (
+            <div key={toast.id} className={`toast-item toast-${toast.type}`}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                {toast.type === 'error' && <AlertCircle size={16} style={{ color: 'var(--danger-color)' }} />}
+                {toast.type === 'success' && <CheckCircle size={16} style={{ color: 'var(--success-color)' }} />}
+                {toast.type === 'warning' && <AlertTriangle size={16} style={{ color: 'var(--warning-color)' }} />}
+                <span>{toast.message}</span>
+              </div>
+              <button 
+                className="toast-close-btn" 
+                onClick={() => removeToast(toast.id)}
+                aria-label="Cerrar notificación"
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+        </div>
+      )}
     </div>
   );
 }

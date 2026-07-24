@@ -1,14 +1,24 @@
-# edItAr 🎨💻
+<p align="center">
+  <img src="./assets/editar_logo.png" alt="edItAr Logo" width="120" />
+</p>
 
-**edItAr** (ed**i**t**A**r) es una herramienta de código abierto y auto-alojable para React/Next.js y Tailwind CSS. Te permite diseñar e inspeccionar visualmente tus componentes de forma interactiva (estilo Canva), aplicando los cambios de estilo directamente sobre el código fuente local en tiempo real con **cero costo de tokens de IA**.
+<h1 align="center">edItAr</h1>
 
-La lógica compleja de programación se delega a tu asistente de IA (como **Antigravity**) en tu IDE, mientras que los ajustes visuales y estéticos rápidos los haces vos en la interfaz de **edItAr** con historial Undo/Redo y salvaguarda de código dinámico.
+<p align="center">
+  <strong>Editor Visual Auto-Alojable Local para React, Next.js y Tailwind CSS</strong>
+</p>
+
+---
+
+**edItAr** (ed**I**t**A**r) es una herramienta de código abierto y auto-alojable para React/Next.js y Tailwind CSS. Te permite diseñar e inspeccionar visualmente tus componentes de forma interactiva (estilo Canva), aplicando los cambios de estilo directamente sobre el código fuente local en tiempo real.
+
+La lógica compleja de programación se delega a tu asistente de IA, mientras que los ajustes visuales y estéticos rápidos los haces vos en la interfaz de **edItAr** con historial Undo/Redo y salvaguarda de código dinámico.
 
 ---
 
 ## Cómo Empezar
 
-Para iniciar el editor visual y la aplicación de demostración localmente, sigue estos pasos:
+Para iniciar el editor visual y la aplicación de demostración localmente, segui estos pasos:
 
 ### 1. Instalar dependencias
 
@@ -91,7 +101,7 @@ export default function RootLayout({ children }) {
 ```
 
 ### 4. Inicia el editor en tu proyecto
-Una vez configurado Babel y el script cliente, puedes ejecutar el editor visual directamente en la raíz de tu proyecto ejecutando:
+Una vez configurado Babel y el script cliente, podes ejecutar el editor visual directamente en la raíz de tu proyecto ejecutando:
 
 ```bash
 # Si lo tienes instalado local o globalmente

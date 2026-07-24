@@ -16,6 +16,7 @@ app.use(bodyParser.json());
 
 // Serve static frontend build if it exists
 app.use(express.static(path.join(__dirname, '../dist')));
+app.use('/assets', express.static(path.join(__dirname, '../assets')));
 
 // Serve editar-client.js (and visualdev-client.js alias) for injection into client apps
 app.get(['/editar-client.js', '/visualdev-client.js'], (req, res) => {

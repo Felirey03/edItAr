@@ -12,14 +12,19 @@ demo-app/out/
 localhost-*.log
 npm-debug.log*
 
-# Configuraciones de agentes y especificaciones internas
+# Configuraciones de agentes, Impeccable y especificaciones internas
 .agents/
 .atl/
 .gemini/
-.vscode/
-.idea/
+.impeccable/
 openspec/
 .openspec/
+.vscode/
+.idea/
+
+# Documentos internos de Impeccable / Agentes
+PRODUCT.md
+DESIGN.md
 
 # Archivos del sistema operativo
 .DS_Store
