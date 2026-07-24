@@ -13,9 +13,11 @@
     "src/server.js",
     "src/client.js",
     "src/babel-plugin.js",
+    "src/cli",
     "dist"
   ],
   "scripts": {
+    "test": "node --test test/cli.test.js",
     "build": "vite build",
     "dev:client": "vite",
     "dev:server": "nodemon src/server.js",
