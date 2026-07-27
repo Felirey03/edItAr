@@ -8,7 +8,7 @@ export default function Home() {
         <span className="px-3 py-1 mb-4 bg-indigo-950/60 text-indigo-400 text-xs italic inline-block rounded-full border border-indigo-800/50 tracking-wider uppercase">
           Demo de VisualDev
         </span>
-        <h1 className="text-4xl sm:text-6xl font-bold tracking-tight text-white mb-6">Diseña Visualmente en Tiempo Rea</h1>
+        <h1 className="text-4xl sm:text-6xl font-bold tracking-tight text-white mb-6">Diseña Visualmente en Tiempo Re</h1>
         <p className="text-lg text-zinc-400 max-w-2xl mx-auto">
           Haz clic en cualquier elemento para editar su contenido o modificar sus clases de Tailwind directamente sobre el código fuente local.
         </p>

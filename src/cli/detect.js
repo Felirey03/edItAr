@@ -96,11 +96,26 @@ function detectProject(targetDir = process.cwd()) {
     }
   }
 
+  const nextConfigs = [
+    'next.config.js',
+    'next.config.mjs'
+  ];
+
+  let nextConfigPath = null;
+  for (const configFile of nextConfigs) {
+    const fullPath = path.join(absoluteDir, configFile);
+    if (fs.existsSync(fullPath)) {
+      nextConfigPath = fullPath;
+      break;
+    }
+  }
+
   return {
     framework,
     layoutPath,
     hasBabelConfig,
-    babelConfigPath
+    babelConfigPath,
+    nextConfigPath
   };
 }
 

@@ -3,6 +3,7 @@ const banner = require('./banner');
 const { detectProject } = require('./detect');
 const { configureBabel } = require('./configure-babel');
 const { injectClientScript } = require('./inject-script');
+const { configureNext, cleanBabelConfigs } = require('./configure-next');
 
 async function run(cwd = process.cwd()) {
   banner.printHeader();
@@ -20,16 +21,41 @@ async function run(cwd = process.cwd()) {
     banner.printInfo('Framework detection: Unknown layout pattern, will configure generic Babel & search files.');
   }
 
-  // Configure Babel
-  const babelResult = configureBabel(cwd, detection.framework);
-  const relBabel = path.relative(cwd, babelResult.configPath);
+  const isNext = detection.framework === 'next-app' || detection.framework === 'next-pages';
+  let babelResult = { action: 'skipped', configPath: null };
+  let nextConfigResult = { action: 'skipped', configPath: null };
+  let cleanedBabel = [];
 
-  if (babelResult.action === 'created') {
-    banner.printSuccess(`Created ${relBabel} with editar/babel-plugin`);
-  } else if (babelResult.action === 'updated') {
-    banner.printSuccess(`Added editar/babel-plugin to ${relBabel}`);
-  } else if (babelResult.action === 'already-configured') {
-    banner.printInfo(`Babel plugin already configured in ${relBabel}`);
+  if (isNext) {
+    // Safely delete existing babel configs to restore SWC
+    cleanedBabel = cleanBabelConfigs(cwd);
+    for (const file of cleanedBabel) {
+      banner.printSuccess(`Removed conflicting Babel config ${path.relative(cwd, file)} to restore SWC`);
+    }
+
+    if (detection.nextConfigPath) {
+      nextConfigResult = configureNext(cwd, detection.nextConfigPath);
+      const relNext = path.relative(cwd, nextConfigResult.configPath);
+      if (nextConfigResult.action === 'updated') {
+        banner.printSuccess(`Wrapped ${relNext} with withEditar`);
+      } else if (nextConfigResult.action === 'already-configured') {
+        banner.printInfo(`Next.js config already wrapped in ${relNext}`);
+      }
+    } else {
+      banner.printInfo('No next.config.js or next.config.mjs found to wrap.');
+    }
+  } else {
+    // Configure Babel for non-Next
+    babelResult = configureBabel(cwd, detection.framework);
+    const relBabel = path.relative(cwd, babelResult.configPath);
+
+    if (babelResult.action === 'created') {
+      banner.printSuccess(`Created ${relBabel} with editar/babel-plugin`);
+    } else if (babelResult.action === 'updated') {
+      banner.printSuccess(`Added editar/babel-plugin to ${relBabel}`);
+    } else if (babelResult.action === 'already-configured') {
+      banner.printInfo(`Babel plugin already configured in ${relBabel}`);
+    }
   }
 
   // Inject Script
@@ -50,13 +76,16 @@ async function run(cwd = process.cwd()) {
   banner.printCompletionInstructions({
     framework: detection.framework,
     layoutPath: relLayout,
-    babelConfigPath: relBabel
+    babelConfigPath: babelResult.configPath ? path.relative(cwd, babelResult.configPath) : null,
+    nextConfigPath: nextConfigResult.configPath ? path.relative(cwd, nextConfigResult.configPath) : null
   });
 
   return {
     detection,
     babelResult,
-    scriptResult
+    nextConfigResult,
+    scriptResult,
+    cleanedBabel
   };
 }
 

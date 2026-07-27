@@ -135,14 +135,131 @@ test('bin/editar.js CLI flags (--help and --version)', () => {
   const binPath = path.join(__dirname, '../bin/editar.js');
 
   const helpOut = execSync(`node ${binPath} --help`).toString();
-  assert.ok(helpOut.includes('Usage: npx editar'));
+  assert.ok(helpOut.includes('Usage:'));
+  assert.ok(helpOut.includes('npx editar'));
   assert.ok(helpOut.includes('init'));
 
   const versionOut = execSync(`node ${binPath} --version`).toString();
   assert.ok(versionOut.includes('edItAr v1.0.0'));
 });
 
-test('bin/editar.js init command integration in temporary workspace', () => {
+test('bin/editar.js init command integration in Vite/React workspace', () => {
+  const tmp = createTempDir();
+  const binPath = path.join(__dirname, '../bin/editar.js');
+  try {
+    const indexFile = path.join(tmp, 'index.html');
+    fs.writeFileSync(indexFile, '<html><head></head><body><div id="root"></div></body></html>');
+
+    const output = execSync(`node ${binPath} init`, { cwd: tmp }).toString();
+    assert.ok(output.includes('Detected Vite / HTML project'));
+    assert.ok(output.includes('Created babel.config.js'));
+    assert.ok(output.includes('Injected client script tag'));
+
+    assert.ok(fs.existsSync(path.join(tmp, 'babel.config.js')));
+    const indexContent = fs.readFileSync(indexFile, 'utf8');
+    assert.ok(indexContent.includes('editar-client.js'));
+  } finally {
+    removeTempDir(tmp);
+  }
+});
+
+test('Webpack Loader transforms JS/TSX file with babel-plugin', async () => {
+  const webpackLoader = require('../src/webpack-loader');
+  
+  const result = await new Promise((resolve, reject) => {
+    const context = {
+      resourcePath: '/path/to/project/src/Component.tsx',
+      async() {
+        return (err, code, map) => {
+          if (err) reject(err);
+          else resolve(code);
+        };
+      }
+    };
+
+    const source = `
+export default function Component() {
+  return (
+    <div className="test">
+      Hello
+    </div>
+  );
+}
+    `;
+
+    webpackLoader.call(context, source);
+  });
+
+  assert.ok(result.includes('data-source-loc'));
+  assert.ok(result.includes('src/Component.tsx:4:5'));
+});
+
+test('withEditar wraps config and appends webpack rule', () => {
+  const withEditar = require('../src/next');
+  
+  const originalConfig = {
+    reactStrictMode: true,
+    webpack(config, options) {
+      config.customLoaded = true;
+      return config;
+    }
+  };
+
+  const wrapped = withEditar(originalConfig);
+  assert.strictEqual(wrapped.reactStrictMode, true);
+
+  const webpackConfig = { module: { rules: [] } };
+  const options = { dev: true, isServer: false };
+  const resConfig = wrapped.webpack(webpackConfig, options);
+
+  assert.strictEqual(resConfig.module.rules.length, 1);
+  assert.ok(resConfig.module.rules[0].use[0].loader.includes('webpack-loader.js'));
+  assert.strictEqual(resConfig.customLoaded, true);
+
+  const prodWebpackConfig = { module: { rules: [] } };
+  const prodResConfig = wrapped.webpack(prodWebpackConfig, { dev: false, isServer: false });
+  assert.strictEqual(prodResConfig.module.rules.length, 0);
+});
+
+test('configureNext and cleanBabelConfigs operations', () => {
+  const tmp = createTempDir();
+  try {
+    const { configureNext, cleanBabelConfigs } = require('../src/cli/configure-next');
+    
+    const cjsConfig = path.join(tmp, 'next.config.js');
+    fs.writeFileSync(cjsConfig, 'module.exports = {\n  reactStrictMode: true\n};');
+    
+    const resCjs = configureNext(tmp, cjsConfig);
+    assert.strictEqual(resCjs.action, 'updated');
+    const contentCjs = fs.readFileSync(cjsConfig, 'utf8');
+    assert.ok(contentCjs.includes('withEditar'));
+    assert.ok(contentCjs.includes('module.exports = withEditar({'));
+
+    const resCjs2 = configureNext(tmp, cjsConfig);
+    assert.strictEqual(resCjs2.action, 'already-configured');
+
+    const mjsConfig = path.join(tmp, 'next.config.mjs');
+    fs.writeFileSync(mjsConfig, 'export default {\n  reactStrictMode: false\n};');
+
+    const resMjs = configureNext(tmp, mjsConfig);
+    assert.strictEqual(resMjs.action, 'updated');
+    const contentMjs = fs.readFileSync(mjsConfig, 'utf8');
+    assert.ok(contentMjs.includes('withEditar'));
+    assert.ok(contentMjs.includes('export default withEditar({'));
+
+    const babelConfig = path.join(tmp, 'babel.config.js');
+    fs.writeFileSync(babelConfig, 'module.exports = { plugins: ["editar/babel-plugin"] };');
+    assert.ok(fs.existsSync(babelConfig));
+
+    const cleaned = cleanBabelConfigs(tmp);
+    assert.strictEqual(cleaned.length, 1);
+    assert.ok(!fs.existsSync(babelConfig));
+  } finally {
+    removeTempDir(tmp);
+  }
+});
+
+test('bin/editar.js init command integrates Next.js project properly', () => {
   const tmp = createTempDir();
   const binPath = path.join(__dirname, '../bin/editar.js');
   try {
@@ -150,12 +267,21 @@ test('bin/editar.js init command integration in temporary workspace', () => {
     const layoutFile = path.join(tmp, 'app', 'layout.tsx');
     fs.writeFileSync(layoutFile, 'export default function RootLayout({ children }: { children: React.ReactNode }) { return (<html><head></head><body>{children}</body></html>); }');
 
+    const nextConfig = path.join(tmp, 'next.config.js');
+    fs.writeFileSync(nextConfig, 'module.exports = {\n  reactStrictMode: true\n};');
+
+    const babelConfig = path.join(tmp, 'babel.config.js');
+    fs.writeFileSync(babelConfig, 'module.exports = { plugins: ["editar/babel-plugin"] };');
+
     const output = execSync(`node ${binPath} init`, { cwd: tmp }).toString();
     assert.ok(output.includes('Detected Next.js App Router'));
-    assert.ok(output.includes('Created babel.config.js'));
+    assert.ok(output.includes('Removed conflicting Babel config'));
+    assert.ok(output.includes('Wrapped next.config.js with withEditar'));
     assert.ok(output.includes('Injected client script tag'));
 
-    assert.ok(fs.existsSync(path.join(tmp, 'babel.config.js')));
+    assert.ok(!fs.existsSync(babelConfig));
+    const nextContent = fs.readFileSync(nextConfig, 'utf8');
+    assert.ok(nextContent.includes('withEditar'));
     const layoutContent = fs.readFileSync(layoutFile, 'utf8');
     assert.ok(layoutContent.includes('editar-client.js'));
   } finally {

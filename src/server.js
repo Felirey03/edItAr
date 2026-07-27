@@ -4,7 +4,26 @@ const bodyParser = require('body-parser');
 const fs = require('fs');
 const path = require('path');
 const recast = require('recast');
-const babelParser = require('recast/parsers/babel');
+const parser = require('@babel/parser');
+const babelParser = {
+  parse(code) {
+    return parser.parse(code, {
+      sourceType: 'module',
+      tokens: true,
+      plugins: [
+        'jsx',
+        'typescript',
+        'decorators-legacy',
+        'classProperties',
+        'objectRestSpread',
+        'dynamicImport',
+        'optionalChaining',
+        'nullishCoalescingOperator',
+        'exportDefaultFrom'
+      ]
+    });
+  }
+};
 const traverse = require('@babel/traverse').default;
 
 const app = express();

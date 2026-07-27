@@ -58,6 +58,9 @@ function printCompletionInstructions(details = {}) {
   if (details.babelConfigPath) {
     console.log(`  ${colors.bold}Babel Config:${colors.reset} ${details.babelConfigPath}`);
   }
+  if (details.nextConfigPath) {
+    console.log(`  ${colors.bold}Next Config:${colors.reset} ${details.nextConfigPath}`);
+  }
   console.log(`\n${colors.bold}Next steps:${colors.reset}`);
   console.log(`  1. Start edItAr visual editor: ${colors.cyan}npx editar${colors.reset} (or ${colors.cyan}npx editar start${colors.reset})`);
   console.log(`  2. Start your dev server (e.g., ${colors.cyan}npm run dev${colors.reset})`);
