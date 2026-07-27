@@ -7,6 +7,7 @@
 
   let selectedElement = null;
   let hoverElement = null;
+  let currentMode = 'edit';
 
   // Create overlay borders for hover and selection
   const hoverOutline = document.createElement('div');
@@ -70,8 +71,51 @@
     }
   }
 
+  function notifyUrlChanged() {
+    try {
+      if (window.parent && window.parent !== window) {
+        window.parent.postMessage({
+          type: 'VISUALDEV_URL_CHANGED',
+          url: window.location.href
+        }, '*');
+      }
+    } catch (err) {
+      // Ignore cross-origin errors
+    }
+  }
+
+  // Patch history methods safely
+  if (window.history) {
+    if (typeof window.history.pushState === 'function' && !window.history.pushState.__visualdev_patched) {
+      const origPushState = window.history.pushState;
+      window.history.pushState = function(...args) {
+        const result = origPushState.apply(this, args);
+        notifyUrlChanged();
+        return result;
+      };
+      window.history.pushState.__visualdev_patched = true;
+    }
+
+    if (typeof window.history.replaceState === 'function' && !window.history.replaceState.__visualdev_patched) {
+      const origReplaceState = window.history.replaceState;
+      window.history.replaceState = function(...args) {
+        const result = origReplaceState.apply(this, args);
+        notifyUrlChanged();
+        return result;
+      };
+      window.history.replaceState.__visualdev_patched = true;
+    }
+  }
+
+  window.addEventListener('popstate', notifyUrlChanged);
+  window.addEventListener('hashchange', notifyUrlChanged);
+
   // Monitor mouse movements for hover styling
   document.addEventListener('mouseover', (e) => {
+    if (currentMode === 'navigate') {
+      hoverOutline.style.display = 'none';
+      return;
+    }
     let el = e.target;
     // Find closest element with data-source-loc
     while (el && el !== document.body) {
@@ -87,6 +131,9 @@
 
   // Disable pointer events on links/buttons to prevent navigating away during editing
   document.addEventListener('click', (e) => {
+    if (currentMode === 'navigate') {
+      return;
+    }
     let el = e.target;
     while (el && el !== document.body) {
       const sourceLoc = el.getAttribute('data-source-loc');
@@ -96,6 +143,8 @@
 
         selectedElement = el;
         updateOutline(selectedElement, selectOutline, selectLabel);
+
+        const instanceIndex = Math.max(0, Array.from(document.querySelectorAll('[data-source-loc="' + sourceLoc + '"]')).indexOf(el));
 
         // Build ancestors list
         const ancestors = [];
@@ -117,6 +166,7 @@
         window.parent.postMessage({
           type: 'VISUALDEV_SELECT_ELEMENT',
           sourceLoc: sourceLoc,
+          instanceIndex: instanceIndex,
           className: el.className || '',
           tagName: el.tagName.toLowerCase(),
           text: el.innerText || '',
@@ -140,10 +190,12 @@
 
   // Sync positions on scroll or resize
   window.addEventListener('scroll', () => {
+    if (currentMode === 'navigate') return;
     updateOutline(hoverElement, hoverOutline);
     updateOutline(selectedElement, selectOutline, selectLabel);
   });
   window.addEventListener('resize', () => {
+    if (currentMode === 'navigate') return;
     updateOutline(hoverElement, hoverOutline);
     updateOutline(selectedElement, selectOutline, selectLabel);
   });
@@ -178,16 +230,28 @@
   // Listen for updates from the Editor App
   window.addEventListener('message', (e) => {
     if (e.data) {
-      if (e.data.type === 'VISUALDEV_CLEAR_SELECTION') {
+      if (e.data.type === 'VISUALDEV_SET_MODE') {
+        currentMode = e.data.mode || 'edit';
+        if (currentMode === 'navigate') {
+          hoverOutline.style.display = 'none';
+          selectOutline.style.display = 'none';
+          selectLabel.style.display = 'none';
+          hoverElement = null;
+          selectedElement = null;
+        }
+      } else if (e.data.type === 'VISUALDEV_CLEAR_SELECTION') {
         selectedElement = null;
         updateOutline(null, selectOutline, selectLabel);
       } else if (e.data.type === 'VISUALDEV_UPDATE_CLASSNAME') {
-        const { sourceLoc, className } = e.data;
-        const el = document.querySelector(`[data-source-loc="${sourceLoc}"]`);
+        const { sourceLoc, instanceIndex, className } = e.data;
+        const matches = document.querySelectorAll('[data-source-loc="' + sourceLoc + '"]');
+        const el = matches[instanceIndex !== undefined ? instanceIndex : 0] || matches[0];
         if (el) {
           el.className = className;
           setTimeout(() => {
-            updateOutline(el, selectOutline, selectLabel);
+            if (currentMode !== 'navigate') {
+              updateOutline(el, selectOutline, selectLabel);
+            }
           }, 50);
         }
       } else if (e.data.type === 'VISUALDEV_UPDATE_TEXT') {
@@ -196,15 +260,20 @@
         if (el) {
           el.innerText = text;
           setTimeout(() => {
-            updateOutline(el, selectOutline, selectLabel);
+            if (currentMode !== 'navigate') {
+              updateOutline(el, selectOutline, selectLabel);
+            }
           }, 50);
         }
       } else if (e.data.type === 'VISUALDEV_FORCE_SELECT') {
-        const { sourceLoc } = e.data;
-        const targetEl = document.querySelector(`[data-source-loc="${sourceLoc}"]`);
+        const { sourceLoc, instanceIndex } = e.data;
+        const matches = document.querySelectorAll('[data-source-loc="' + sourceLoc + '"]');
+        const targetEl = matches[instanceIndex !== undefined ? instanceIndex : 0] || matches[0];
         if (targetEl) {
           selectedElement = targetEl;
-          updateOutline(selectedElement, selectOutline, selectLabel);
+          if (currentMode !== 'navigate') {
+            updateOutline(selectedElement, selectOutline, selectLabel);
+          }
 
           // Re-build ancestors
           const ancestors = [];
@@ -221,10 +290,12 @@
           }
           
           const rect = selectedElement.getBoundingClientRect();
+          const targetIndex = Math.max(0, Array.from(document.querySelectorAll('[data-source-loc="' + sourceLoc + '"]')).indexOf(selectedElement));
 
           window.parent.postMessage({
             type: 'VISUALDEV_SELECT_ELEMENT',
             sourceLoc: sourceLoc,
+            instanceIndex: targetIndex,
             className: selectedElement.className || '',
             tagName: selectedElement.tagName.toLowerCase(),
             text: selectedElement.innerText || '',

@@ -288,3 +288,246 @@ test('bin/editar.js init command integrates Next.js project properly', () => {
     removeTempDir(tmp);
   }
 });
+
+test('App.jsx renders mode switcher with MousePointer and Sliders icons', () => {
+  const appPath = path.join(__dirname, '../src/client/App.jsx');
+  const appContent = fs.readFileSync(appPath, 'utf8');
+
+  assert.ok(appContent.includes('MousePointer'));
+  assert.ok(appContent.includes('Sliders'));
+  assert.ok(appContent.includes('editorMode'));
+  assert.ok(appContent.includes('mode-switcher-container'));
+  assert.ok(appContent.includes('mode-switcher-btn'));
+  assert.ok(appContent.includes('aria-pressed={editorMode === \'edit\'}'));
+  assert.ok(appContent.includes('aria-pressed={editorMode === \'navigate\'}'));
+  assert.ok(appContent.includes('VISUALDEV_SET_MODE'));
+  assert.ok(appContent.includes('VISUALDEV_URL_CHANGED'));
+});
+
+test('src/client.js mode switching, event bypass, and history URL sync', () => {
+  const clientScriptPath = path.join(__dirname, '../src/client.js');
+  const scriptContent = fs.readFileSync(clientScriptPath, 'utf8');
+  
+  assert.ok(scriptContent.includes('VISUALDEV_SET_MODE'));
+  assert.ok(scriptContent.includes('VISUALDEV_URL_CHANGED'));
+  assert.ok(scriptContent.includes('__visualdev_patched'));
+
+  // Test execution behavior with mock DOM globals
+  const listeners = {};
+  const parentMessages = [];
+
+  const mockElement = {
+    style: {},
+    setAttribute: () => {},
+    getAttribute: (attr) => attr === 'data-source-loc' ? 'src/App.jsx:10:5' : null,
+    getBoundingClientRect: () => ({ top: 10, left: 10, width: 100, height: 50 }),
+    tagName: 'BUTTON',
+    className: 'btn-primary',
+    innerText: 'Click me',
+    parentElement: null
+  };
+
+  const mockDocument = {
+    body: {
+      appendChild: () => {}
+    },
+    createElement: () => ({ style: {}, textContent: '' }),
+    querySelector: () => mockElement,
+    querySelectorAll: () => [mockElement],
+    addEventListener: (type, fn, useCapture) => {
+      listeners[type] = fn;
+    },
+    activeElement: null
+  };
+
+  const mockHistory = {
+    pushState: function(state, title, url) { this.url = url; },
+    replaceState: function(state, title, url) { this.url = url; }
+  };
+
+  const mockWindow = {
+    __visualdev_injected: false,
+    scrollX: 0,
+    scrollY: 0,
+    location: { href: 'http://localhost:3000/dashboard' },
+    history: mockHistory,
+    parent: {
+      postMessage: (data) => parentMessages.push(data)
+    },
+    addEventListener: (type, fn) => {
+      listeners['window_' + type] = fn;
+    },
+    getComputedStyle: () => ({ backgroundColor: 'red', color: 'blue' })
+  };
+
+  mockElement.parentElement = mockDocument.body;
+
+  // Execute client script within mock context
+  const runScript = new Function('window', 'document', 'console', scriptContent);
+  runScript(mockWindow, mockDocument, { log: () => {} });
+
+  assert.strictEqual(mockWindow.__visualdev_injected, true);
+  assert.strictEqual(typeof listeners['window_message'], 'function');
+  assert.strictEqual(mockHistory.pushState.__visualdev_patched, true);
+
+  // 1. Test history.pushState dispatches VISUALDEV_URL_CHANGED
+  mockHistory.pushState({}, '', '/new-page');
+  assert.strictEqual(parentMessages.length, 1);
+  assert.strictEqual(parentMessages[0].type, 'VISUALDEV_URL_CHANGED');
+  assert.strictEqual(parentMessages[0].url, 'http://localhost:3000/dashboard');
+
+  // 2. Test mode switch to navigate
+  listeners['window_message']({ data: { type: 'VISUALDEV_SET_MODE', mode: 'navigate' } });
+
+  // 3. Test click event in navigate mode (does not call preventDefault)
+  let prevented = false;
+  let stopped = false;
+  const mockClickEvent = {
+    target: mockElement,
+    preventDefault: () => { prevented = true; },
+    stopPropagation: () => { stopped = true; }
+  };
+  listeners['click'](mockClickEvent);
+  assert.strictEqual(prevented, false);
+  assert.strictEqual(stopped, false);
+
+  // 4. Test mode switch back to edit mode
+  listeners['window_message']({ data: { type: 'VISUALDEV_SET_MODE', mode: 'edit' } });
+
+  // 5. Test click event in edit mode (calls preventDefault & posts VISUALDEV_SELECT_ELEMENT)
+  parentMessages.length = 0;
+  listeners['click'](mockClickEvent);
+  assert.strictEqual(prevented, true);
+  assert.strictEqual(stopped, true);
+  assert.strictEqual(parentMessages.length, 1);
+  assert.strictEqual(parentMessages[0].type, 'VISUALDEV_SELECT_ELEMENT');
+  assert.strictEqual(parentMessages[0].sourceLoc, 'src/App.jsx:10:5');
+  assert.strictEqual(parentMessages[0].instanceIndex, 0);
+});
+
+test('src/client.js instanceIndex selection, payload transmission, and accurate DOM reselection with fallback', () => {
+  const clientScriptPath = path.join(__dirname, '../src/client.js');
+  const scriptContent = fs.readFileSync(clientScriptPath, 'utf8');
+
+  const listeners = {};
+  const parentMessages = [];
+
+  const createMockElement = (id, className) => ({
+    id,
+    className,
+    style: {},
+    setAttribute: () => {},
+    getAttribute: (attr) => attr === 'data-source-loc' ? 'src/List.jsx:15:3' : null,
+    getBoundingClientRect: () => ({ top: 20, left: 20, width: 100, height: 30 }),
+    tagName: 'DIV',
+    innerText: `Item ${id}`,
+    parentElement: null
+  });
+
+  const el0 = createMockElement('0', 'item-class');
+  const el1 = createMockElement('1', 'item-class');
+  const el2 = createMockElement('2', 'item-class');
+
+  const mockDocument = {
+    body: { appendChild: () => {} },
+    createElement: () => ({ style: {}, textContent: '' }),
+    querySelectorAll: (selector) => {
+      if (selector === '[data-source-loc="src/List.jsx:15:3"]') {
+        return [el0, el1, el2];
+      }
+      return [];
+    },
+    querySelector: (selector) => {
+      const matches = mockDocument.querySelectorAll(selector);
+      return matches[0] || null;
+    },
+    addEventListener: (type, fn) => {
+      listeners[type] = fn;
+    },
+    activeElement: null
+  };
+
+  el0.parentElement = mockDocument.body;
+  el1.parentElement = mockDocument.body;
+  el2.parentElement = mockDocument.body;
+
+  const mockWindow = {
+    __visualdev_injected: false,
+    scrollX: 0,
+    scrollY: 0,
+    location: { href: 'http://localhost:3000' },
+    history: {},
+    parent: {
+      postMessage: (data) => parentMessages.push(data)
+    },
+    addEventListener: (type, fn) => {
+      listeners['window_' + type] = fn;
+    },
+    getComputedStyle: () => ({ backgroundColor: 'transparent', color: 'black' })
+  };
+
+  const runScript = new Function('window', 'document', 'console', scriptContent);
+  runScript(mockWindow, mockDocument, { log: () => {} });
+
+  // 1. Click on el1 (2nd element in list, index 1)
+  parentMessages.length = 0;
+  const clickEvent1 = {
+    target: el1,
+    preventDefault: () => {},
+    stopPropagation: () => {}
+  };
+  listeners['click'](clickEvent1);
+
+  assert.strictEqual(parentMessages.length, 1);
+  assert.strictEqual(parentMessages[0].type, 'VISUALDEV_SELECT_ELEMENT');
+  assert.strictEqual(parentMessages[0].sourceLoc, 'src/List.jsx:15:3');
+  assert.strictEqual(parentMessages[0].instanceIndex, 1);
+
+  // 2. Receive VISUALDEV_UPDATE_CLASSNAME targeted at instanceIndex 1
+  listeners['window_message']({
+    data: {
+      type: 'VISUALDEV_UPDATE_CLASSNAME',
+      sourceLoc: 'src/List.jsx:15:3',
+      instanceIndex: 1,
+      className: 'updated-item-1'
+    }
+  });
+
+  assert.strictEqual(el1.className, 'updated-item-1');
+  assert.strictEqual(el0.className, 'item-class');
+  assert.strictEqual(el2.className, 'item-class');
+
+  // 3. Fallback check: VISUALDEV_UPDATE_CLASSNAME without instanceIndex updates matches[0]
+  listeners['window_message']({
+    data: {
+      type: 'VISUALDEV_UPDATE_CLASSNAME',
+      sourceLoc: 'src/List.jsx:15:3',
+      className: 'updated-item-0'
+    }
+  });
+
+  assert.strictEqual(el0.className, 'updated-item-0');
+
+  // 4. Fallback check: VISUALDEV_UPDATE_CLASSNAME with out-of-bounds instanceIndex falls back to matches[0]
+  listeners['window_message']({
+    data: {
+      type: 'VISUALDEV_UPDATE_CLASSNAME',
+      sourceLoc: 'src/List.jsx:15:3',
+      instanceIndex: 99,
+      className: 'fallback-item-0'
+    }
+  });
+
+  assert.strictEqual(el0.className, 'fallback-item-0');
+});
+
+test('App.jsx stores instanceIndex in state and passes instanceIndex in postMessage', () => {
+  const appPath = path.join(__dirname, '../src/client/App.jsx');
+  const appContent = fs.readFileSync(appPath, 'utf8');
+
+  assert.ok(appContent.includes('instanceIndex'));
+  assert.ok(appContent.includes('instanceIndex: instanceIndex !== undefined ? instanceIndex : 0'));
+  assert.ok(appContent.includes('instanceIndex: selectedElement.instanceIndex'));
+});
+
+

@@ -205,6 +205,43 @@ input:focus, select:focus, textarea:focus, button:focus-visible {
   margin-left: 8px;
 }
 
+/* Mode Switcher Segmented Toggle */
+.mode-switcher-container {
+  display: flex;
+  align-items: center;
+  background-color: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  padding: 2px;
+  margin-left: 8px;
+}
+
+.mode-switcher-btn {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  background: transparent;
+  border: none;
+  color: var(--text-secondary);
+  padding: 4px 8px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  cursor: pointer;
+  border-radius: 4px;
+  transition: all 0.2s ease;
+}
+
+.mode-switcher-btn:hover {
+  color: var(--text-primary);
+  background-color: var(--bg-tertiary);
+}
+
+.mode-switcher-btn.active {
+  background-color: var(--bg-tertiary);
+  color: var(--text-primary);
+  border: 1px solid var(--border-color);
+}
+
 .status-dot {
   width: 8px;
   height: 8px;

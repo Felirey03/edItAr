@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
-  Folder, File, Layers, RefreshCw, Smartphone, Monitor, CheckCircle, HelpCircle, Save, Sliders, Type, Move, Image, Lock, AlertTriangle, PanelLeftClose, PanelLeftOpen, RotateCcw, RotateCw,
+  Folder, File, Layers, RefreshCw, Smartphone, Monitor, CheckCircle, HelpCircle, Save, Sliders, MousePointer, Type, Move, Image, Lock, AlertTriangle, PanelLeftClose, PanelLeftOpen, RotateCcw, RotateCw,
   ChevronDown, ChevronRight, X, AlertCircle
 } from 'lucide-react';
 
@@ -204,6 +204,7 @@ export default function App() {
   });
   const [isIframeLoaded, setIsIframeLoaded] = useState(false);
   const [viewMode, setViewMode] = useState('desktop');
+  const [editorMode, setEditorMode] = useState('edit'); // 'edit' | 'navigate'
 
   const addToast = (message, type = 'error') => {
     const id = Date.now().toString() + Math.random().toString().substring(2, 6);
@@ -229,6 +230,16 @@ export default function App() {
 
   // Custom Tailwind theme config
   const [customTheme, setCustomTheme] = useState({ colors: {}, spacing: {}, fontFamily: {} });
+
+  // Send mode updates to iframe
+  useEffect(() => {
+    if (iframeRef.current && iframeRef.current.contentWindow) {
+      iframeRef.current.contentWindow.postMessage({
+        type: 'VISUALDEV_SET_MODE',
+        mode: editorMode
+      }, '*');
+    }
+  }, [editorMode]);
 
   // Fetch custom tailwind config on mount
   useEffect(() => {
@@ -259,12 +270,13 @@ export default function App() {
 
   // Helper to sync element with preview iframe, react state, and server AST
   const applyTransactionState = async (transaction, isClassNameChange, isTextChange) => {
-    const { sourceLoc, file, line, column, className, text, parsed } = transaction;
+    const { sourceLoc, instanceIndex, file, line, column, className, text, parsed } = transaction;
 
     setSelectedElement(prev => prev ? {
       ...prev,
       className: className !== undefined ? className : prev.className,
-      text: text !== undefined ? text : prev.text
+      text: text !== undefined ? text : prev.text,
+      instanceIndex: instanceIndex !== undefined ? instanceIndex : prev.instanceIndex
     } : null);
 
     if (parsed) {
@@ -277,6 +289,7 @@ export default function App() {
         iframeRef.current.contentWindow.postMessage({
           type: 'VISUALDEV_UPDATE_CLASSNAME',
           sourceLoc,
+          instanceIndex: instanceIndex !== undefined ? instanceIndex : (selectedElement?.instanceIndex),
           className
         }, '*');
       }
@@ -469,7 +482,7 @@ export default function App() {
     // Listen for selection events from iframe
     const handleIframeMessage = (e) => {
       if (e.data && e.data.type === 'VISUALDEV_SELECT_ELEMENT') {
-        const { sourceLoc, className, tagName, text, rect, ancestors } = e.data;
+        const { sourceLoc, instanceIndex, className, tagName, text, rect, ancestors } = e.data;
         const fileParts = sourceLoc.split(':');
         const relativeFilePath = fileParts[0];
         const line = parseInt(fileParts[1], 10);
@@ -479,6 +492,7 @@ export default function App() {
 
         setSelectedElement({
           sourceLoc,
+          instanceIndex: instanceIndex !== undefined ? instanceIndex : 0,
           file: relativeFilePath,
           line,
           column: col,
@@ -528,6 +542,10 @@ export default function App() {
             handleRedo();
           }
         }
+      } else if (e.data && e.data.type === 'VISUALDEV_URL_CHANGED') {
+        if (e.data.url) {
+          setTargetUrl(e.data.url);
+        }
       }
     };
 
@@ -558,6 +576,7 @@ export default function App() {
       iframeRef.current.contentWindow.postMessage({
         type: 'VISUALDEV_UPDATE_CLASSNAME',
         sourceLoc: selectedElement.sourceLoc,
+        instanceIndex: selectedElement.instanceIndex,
         className: newClassString
       }, '*');
     }
@@ -631,6 +650,7 @@ export default function App() {
       iframeRef.current.contentWindow.postMessage({
         type: 'VISUALDEV_UPDATE_CLASSNAME',
         sourceLoc: selectedElement.sourceLoc,
+        instanceIndex: selectedElement.instanceIndex,
         className: rawVal
       }, '*');
     }
@@ -811,6 +831,30 @@ export default function App() {
               aria-label="Rehacer cambios"
             >
               <RotateCw size={15} />
+            </button>
+          </div>
+
+          {/* Mode Switcher Segmented Toggle */}
+          <div className="mode-switcher-container" role="group" aria-label="Modo de trabajo del editor">
+            <button 
+              className={`mode-switcher-btn ${editorMode === 'edit' ? 'active' : ''}`}
+              onClick={() => setEditorMode('edit')}
+              title="Modo Edición"
+              aria-label="Modo Edición"
+              aria-pressed={editorMode === 'edit'}
+            >
+              <Sliders size={14} />
+              <span>Editar</span>
+            </button>
+            <button 
+              className={`mode-switcher-btn ${editorMode === 'navigate' ? 'active' : ''}`}
+              onClick={() => setEditorMode('navigate')}
+              title="Modo Navegación"
+              aria-label="Modo Navegación"
+              aria-pressed={editorMode === 'navigate'}
+            >
+              <MousePointer size={14} />
+              <span>Navegar</span>
             </button>
           </div>
 
@@ -1009,7 +1053,15 @@ export default function App() {
                   ref={iframeRef}
                   src={iframeUrl} 
                   className="preview-iframe"
-                  onLoad={() => setIsIframeLoaded(true)}
+                  onLoad={() => {
+                    setIsIframeLoaded(true);
+                    if (iframeRef.current && iframeRef.current.contentWindow) {
+                      iframeRef.current.contentWindow.postMessage({
+                        type: 'VISUALDEV_SET_MODE',
+                        mode: editorMode
+                      }, '*');
+                    }
+                  }}
                   id="preview-iframe"
                 />
 
