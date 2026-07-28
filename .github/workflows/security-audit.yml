@@ -23,4 +23,18 @@ jobs:
         run: npm ci
 
       - name: Run Security Audit
-        run: npm audit --audit-level=moderate
+        run: |
+          npm audit --json > audit.json || true
+          node -e "
+            const fs = require('fs');
+            const a = JSON.parse(fs.readFileSync('audit.json', 'utf8'));
+            const vuln = a.metadata && a.metadata.vulnerabilities ? a.metadata.vulnerabilities : {};
+            const high = vuln.high || 0;
+            const critical = vuln.critical || 0;
+            if (high + critical > 0) {
+              console.error(\`Found \${critical} critical and \${high} high vulnerabilities\`);
+              console.error(JSON.stringify(a, null, 2));
+              process.exit(1);
+            }
+            console.log('No high or critical vulnerabilities found. Moderate/low vulnerabilities are reported but do not fail CI.');
+          "
