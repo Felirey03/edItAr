@@ -29,3 +29,8 @@ DESIGN.md
 # Archivos del sistema operativo
 .DS_Store
 Thumbs.db
+
+# Backups y auditoría de seguridad
+.editar-backups/
+audit.json
+

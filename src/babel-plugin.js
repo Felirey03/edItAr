@@ -5,6 +5,9 @@ module.exports = function (babel) {
   return {
     visitor: {
       JSXOpeningElement(jsxPath, state) {
+        // Skip injection in production environment
+        if (process.env.NODE_ENV === 'production') return;
+
         const location = jsxPath.node.loc;
         if (!location) return;
 
