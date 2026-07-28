@@ -26,12 +26,78 @@ const babelParser = {
 };
 const traverse = require('@babel/traverse').default;
 
+const rateLimit = require('express-rate-limit');
+const b = recast.types.builders;
+
 const app = express();
 const PORT = process.env.PORT || 8080;
 const WORKSPACE_PATH = process.env.WORKSPACE_PATH || process.cwd();
 
-app.use(cors());
-app.use(bodyParser.json());
+// CORS restricted to EDITOR_ALLOWED_ORIGINS
+const EDITOR_ALLOWED_ORIGINS = (process.env.EDITOR_ALLOWED_ORIGINS || '')
+  .split(',')
+  .map(o => o.trim())
+  .filter(Boolean);
+
+const corsOptions = {
+  origin: (origin, callback) => {
+    if (!origin) return callback(null, true);
+    if (EDITOR_ALLOWED_ORIGINS.length === 0 || EDITOR_ALLOWED_ORIGINS.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('CORS policy violation: Origin not allowed'));
+  }
+};
+
+app.use(cors(corsOptions));
+
+// Rate Limiting (100 req / 15 min per IP)
+const apiLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  standardHeaders: true,
+  legacyHeaders: false,
+  message: { error: 'Too many requests, please try again later.' }
+});
+
+app.use('/api/', apiLimiter);
+
+// Payload size limit (100kb max)
+app.use(bodyParser.json({ limit: '100kb' }));
+
+// Secret validation middleware
+const requireEditorSecret = (req, res, next) => {
+  const secretEnv = process.env.EDITOR_SECRET;
+
+  if (process.env.NODE_ENV === 'production' && !secretEnv) {
+    return res.status(403).json({ error: 'Server misconfiguration: EDITOR_SECRET is required in production' });
+  }
+
+  if (secretEnv) {
+    const providedSecret = req.headers['x-editor-secret'];
+    if (!providedSecret || providedSecret !== secretEnv) {
+      return res.status(401).json({ error: 'Unauthorized: Invalid or missing x-editor-secret header' });
+    }
+  }
+
+  next();
+};
+
+// Helper for file backups before write operations
+const createBackup = (absolutePath) => {
+  try {
+    const backupDir = path.join(WORKSPACE_PATH, '.editar-backups');
+    if (!fs.existsSync(backupDir)) {
+      fs.mkdirSync(backupDir, { recursive: true });
+    }
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
+    const filename = path.basename(absolutePath);
+    const backupPath = path.join(backupDir, `${timestamp}_${filename}`);
+    fs.copyFileSync(absolutePath, backupPath);
+  } catch (err) {
+    console.error('Failed to create backup:', err);
+  }
+};
 
 // Serve static frontend build if it exists
 app.use(express.static(path.join(__dirname, '../dist')));
@@ -50,7 +116,7 @@ const isTextFile = (filename) => {
 };
 
 // GET /api/tailwind-config - Parse project tailwind config for custom theme tokens
-app.get('/api/tailwind-config', (req, res) => {
+app.get('/api/tailwind-config', requireEditorSecret, (req, res) => {
   try {
     const candidates = [
       'tailwind.config.js',
@@ -197,7 +263,7 @@ app.get('/api/tailwind-config', (req, res) => {
 
 
 // GET /api/files - recursively scan project directory
-app.get('/api/files', (req, res) => {
+app.get('/api/files', requireEditorSecret, (req, res) => {
   try {
     const listFiles = (dir, rootDir = dir) => {
       let results = [];
@@ -242,36 +308,54 @@ app.get('/api/files', (req, res) => {
 
 // Helper to resolve paths relative to workspace, checking demo-app subfolder if needed
 const resolveFilePath = (file) => {
-  let absolutePath = path.join(WORKSPACE_PATH, file);
-  if (fs.existsSync(absolutePath)) {
-    return absolutePath;
+  if (!file) {
+    const err = new Error('File path is required');
+    err.statusCode = 400;
+    throw err;
   }
-  const demoPath = path.join(WORKSPACE_PATH, 'demo-app', file);
-  if (fs.existsSync(demoPath)) {
-    return demoPath;
+
+  let absolutePath = path.resolve(WORKSPACE_PATH, file);
+  if (!fs.existsSync(absolutePath)) {
+    const demoPath = path.resolve(WORKSPACE_PATH, 'demo-app', file);
+    if (fs.existsSync(demoPath)) {
+      absolutePath = demoPath;
+    }
   }
-  return absolutePath;
+
+  if (!fs.existsSync(absolutePath)) {
+    const err = new Error(`File not found: ${file}`);
+    err.statusCode = 404;
+    throw err;
+  }
+
+  // Obtain real paths to prevent symlink traversal and TOCTOU
+  const realWorkspace = fs.realpathSync(WORKSPACE_PATH);
+  const realTarget = fs.realpathSync(absolutePath);
+
+  const isInside = realTarget === realWorkspace || realTarget.startsWith(realWorkspace + path.sep);
+  if (!isInside) {
+    const err = new Error('Access denied: Out of workspace bounds');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  return realTarget;
 };
 
 // POST /api/read - read file content
-app.post('/api/read', (req, res) => {
+app.post('/api/read', requireEditorSecret, (req, res) => {
   const { file } = req.body;
   if (!file) {
     return res.status(400).json({ error: 'File path is required' });
   }
 
-  const absolutePath = resolveFilePath(file);
-  
-  // Security check: ensure path is within workspace
-  if (!absolutePath.startsWith(WORKSPACE_PATH)) {
-    return res.status(403).json({ error: 'Access denied: Out of workspace bounds' });
-  }
-
   try {
+    const absolutePath = resolveFilePath(file);
     const content = fs.readFileSync(absolutePath, 'utf8');
     res.json({ content });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message });
   }
 });
 
@@ -345,7 +429,7 @@ const findJSXElementAtCoordinates = (absolutePath, line, column) => {
 };
 
 // POST /api/analyze-element - proactive static analysis of dynamic elements
-app.post('/api/analyze-element', (req, res) => {
+app.post('/api/analyze-element', requireEditorSecret, (req, res) => {
   const { file, line, column } = req.body;
 
   if (!file || !line || !column) {
@@ -354,13 +438,8 @@ app.post('/api/analyze-element', (req, res) => {
     });
   }
 
-  const absolutePath = resolveFilePath(file);
-
-  if (!absolutePath.startsWith(WORKSPACE_PATH)) {
-    return res.status(403).json({ error: 'Access denied' });
-  }
-
   try {
+    const absolutePath = resolveFilePath(file);
     const { targetNode } = findJSXElementAtCoordinates(absolutePath, line, column);
 
     if (!targetNode) {
@@ -384,13 +463,14 @@ app.post('/api/analyze-element', (req, res) => {
       isTextDynamic: childrenCheck.isDynamic
     });
   } catch (error) {
+    const status = error.statusCode || 500;
     console.error('Analyze Element Error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(status).json({ error: error.message });
   }
 });
 
 // POST /api/edit-style - AST manipulation to update element className and text
-app.post('/api/edit-style', (req, res) => {
+app.post('/api/edit-style', requireEditorSecret, (req, res) => {
   const { file, line, column, newClasses, newText } = req.body;
 
   if (!file || !line || !column) {
@@ -399,14 +479,8 @@ app.post('/api/edit-style', (req, res) => {
     });
   }
 
-  const absolutePath = resolveFilePath(file);
-
-  // Security check: ensure path is within workspace
-  if (!absolutePath.startsWith(WORKSPACE_PATH)) {
-    return res.status(403).json({ error: 'Access denied' });
-  }
-
   try {
+    const absolutePath = resolveFilePath(file);
     const { targetNode, ast } = findJSXElementAtCoordinates(absolutePath, line, column);
 
     if (!targetNode) {
@@ -443,7 +517,7 @@ app.post('/api/edit-style', (req, res) => {
       }
     }
 
-    // 1. Update classes if provided
+    // 1. Update classes if provided using recast.types.builders
     if (newClasses !== undefined) {
       if (classNameAttr) {
         if (classNameAttr.value && classNameAttr.value.type === 'StringLiteral') {
@@ -454,65 +528,60 @@ app.post('/api/edit-style', (req, res) => {
             expr.quasis[0].value.raw = newClasses;
             expr.quasis[0].value.cooked = newClasses;
           } else {
-            // Complex templates or classnames functions: override with simple string literal for simplicity
-            classNameAttr.value = {
-              type: 'StringLiteral',
-              value: newClasses
-            };
+            // Override with simple string literal using builder
+            classNameAttr.value = b.stringLiteral(newClasses);
           }
         } else {
-          // Fallback
-          classNameAttr.value = {
-            type: 'StringLiteral',
-            value: newClasses
-          };
+          // Fallback using builder
+          classNameAttr.value = b.stringLiteral(newClasses);
         }
       } else {
-        // Create new className attribute
-        openingEl.attributes.push({
-          type: 'JSXAttribute',
-          name: {
-            type: 'JSXIdentifier',
-            name: 'className'
-          },
-          value: {
-            type: 'StringLiteral',
-            value: newClasses
-          }
-        });
+        // Create new className attribute using builder
+        openingEl.attributes.push(
+          b.jsxAttribute(
+            b.jsxIdentifier('className'),
+            b.stringLiteral(newClasses)
+          )
+        );
       }
     }
 
-    // 2. Update text content if provided
+    // 2. Update text content if provided using recast.types.builders
     if (newText !== undefined) {
       targetNode.children = [
-        {
-          type: 'JSXText',
-          value: newText,
-          raw: newText
-        }
+        b.jsxText(newText)
       ];
 
       // Convert self-closing tags to tags with closing tags (e.g. <div /> -> <div>text</div>)
       if (openingEl.selfClosing) {
         openingEl.selfClosing = false;
-        targetNode.closingElement = {
-          type: 'JSXClosingElement',
-          name: openingEl.name
-        };
+        targetNode.closingElement = b.jsxClosingElement(openingEl.name);
       }
     }
 
     // Generate output code keeping format intact
     const { code: outputCode } = recast.print(ast);
 
-    // Save changes
+    // Pre-validate AST parsing with @babel/parser before writing
+    try {
+      babelParser.parse(outputCode);
+    } catch (parseError) {
+      return res.status(400).json({
+        error: `AST syntax pre-validation failed: ${parseError.message}`
+      });
+    }
+
+    // Create backup prior to modifying file
+    createBackup(absolutePath);
+
+    // Save changes to disk
     fs.writeFileSync(absolutePath, outputCode, 'utf8');
 
     res.json({ success: true, message: 'Element updated successfully' });
   } catch (error) {
+    const status = error.statusCode || 500;
     console.error('AST Edit Error:', error);
-    res.status(500).json({ error: error.message });
+    res.status(status).json({ error: error.message });
   }
 });
 

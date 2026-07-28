@@ -9,6 +9,20 @@
   let hoverElement = null;
   let currentMode = 'edit';
 
+  // Origin Handshake state
+  let allowedParentOrigin = new URLSearchParams(window.location.search).get('parentOrigin') || null;
+
+  function postToParent(msg) {
+    try {
+      if (window.parent && window.parent !== window) {
+        const targetOrigin = allowedParentOrigin || '*';
+        window.parent.postMessage(msg, targetOrigin);
+      }
+    } catch (err) {
+      // Ignore cross-origin errors
+    }
+  }
+
   // Create overlay borders for hover and selection
   const hoverOutline = document.createElement('div');
   hoverOutline.style.position = 'absolute';
@@ -72,16 +86,10 @@
   }
 
   function notifyUrlChanged() {
-    try {
-      if (window.parent && window.parent !== window) {
-        window.parent.postMessage({
-          type: 'VISUALDEV_URL_CHANGED',
-          url: window.location.href
-        }, '*');
-      }
-    } catch (err) {
-      // Ignore cross-origin errors
-    }
+    postToParent({
+      type: 'VISUALDEV_URL_CHANGED',
+      url: window.location.href
+    });
   }
 
   // Patch history methods safely
@@ -163,7 +171,7 @@
         const rect = el.getBoundingClientRect();
 
         // Send message to parent window (Editor App)
-        window.parent.postMessage({
+        postToParent({
           type: 'VISUALDEV_SELECT_ELEMENT',
           sourceLoc: sourceLoc,
           instanceIndex: instanceIndex,
@@ -181,7 +189,7 @@
             backgroundColor: window.getComputedStyle(el).backgroundColor,
             color: window.getComputedStyle(el).color,
           }
-        }, '*');
+        });
         return;
       }
       el = el.parentElement;
@@ -217,101 +225,114 @@
     }
 
     if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'z' || e.key.toLowerCase() === 'y'))) {
-      window.parent.postMessage({
+      postToParent({
         type: 'VISUALDEV_KEY_DOWN',
         key: e.key,
         ctrlKey: e.ctrlKey,
         metaKey: e.metaKey,
         shiftKey: e.shiftKey
-      }, '*');
+      });
     }
   });
 
   // Listen for updates from the Editor App
   window.addEventListener('message', (e) => {
-    if (e.data) {
-      if (e.data.type === 'VISUALDEV_SET_MODE') {
-        currentMode = e.data.mode || 'edit';
-        if (currentMode === 'navigate') {
-          hoverOutline.style.display = 'none';
-          selectOutline.style.display = 'none';
-          selectLabel.style.display = 'none';
-          hoverElement = null;
-          selectedElement = null;
-        }
-      } else if (e.data.type === 'VISUALDEV_CLEAR_SELECTION') {
+    if (!e.data) return;
+
+    // Process Handshake INIT
+    if (e.data.type === 'VISUALDEV_INIT') {
+      if (e.data.parentOrigin) {
+        allowedParentOrigin = e.data.parentOrigin;
+      }
+      return;
+    }
+
+    // Validate origin if allowedParentOrigin is set
+    if (allowedParentOrigin && e.origin !== allowedParentOrigin) {
+      return;
+    }
+
+    if (e.data.type === 'VISUALDEV_SET_MODE') {
+      currentMode = e.data.mode || 'edit';
+      if (currentMode === 'navigate') {
+        hoverOutline.style.display = 'none';
+        selectOutline.style.display = 'none';
+        selectLabel.style.display = 'none';
+        hoverElement = null;
         selectedElement = null;
-        updateOutline(null, selectOutline, selectLabel);
-      } else if (e.data.type === 'VISUALDEV_UPDATE_CLASSNAME') {
-        const { sourceLoc, instanceIndex, className } = e.data;
-        const matches = document.querySelectorAll('[data-source-loc="' + sourceLoc + '"]');
-        const el = matches[instanceIndex !== undefined ? instanceIndex : 0] || matches[0];
-        if (el) {
-          el.className = className;
-          setTimeout(() => {
-            if (currentMode !== 'navigate') {
-              updateOutline(el, selectOutline, selectLabel);
-            }
-          }, 50);
-        }
-      } else if (e.data.type === 'VISUALDEV_UPDATE_TEXT') {
-        const { sourceLoc, text } = e.data;
-        const el = document.querySelector(`[data-source-loc="${sourceLoc}"]`);
-        if (el) {
-          el.innerText = text;
-          setTimeout(() => {
-            if (currentMode !== 'navigate') {
-              updateOutline(el, selectOutline, selectLabel);
-            }
-          }, 50);
-        }
-      } else if (e.data.type === 'VISUALDEV_FORCE_SELECT') {
-        const { sourceLoc, instanceIndex } = e.data;
-        const matches = document.querySelectorAll('[data-source-loc="' + sourceLoc + '"]');
-        const targetEl = matches[instanceIndex !== undefined ? instanceIndex : 0] || matches[0];
-        if (targetEl) {
-          selectedElement = targetEl;
+      }
+    } else if (e.data.type === 'VISUALDEV_CLEAR_SELECTION') {
+      selectedElement = null;
+      updateOutline(null, selectOutline, selectLabel);
+    } else if (e.data.type === 'VISUALDEV_UPDATE_CLASSNAME') {
+      const { sourceLoc, instanceIndex, className } = e.data;
+      const matches = document.querySelectorAll('[data-source-loc="' + sourceLoc + '"]');
+      const el = matches[instanceIndex !== undefined ? instanceIndex : 0] || matches[0];
+      if (el) {
+        el.className = className;
+        setTimeout(() => {
           if (currentMode !== 'navigate') {
-            updateOutline(selectedElement, selectOutline, selectLabel);
+            updateOutline(el, selectOutline, selectLabel);
           }
-
-          // Re-build ancestors
-          const ancestors = [];
-          let curr = selectedElement;
-          while (curr && curr !== document.body) {
-            const loc = curr.getAttribute('data-source-loc');
-            ancestors.unshift({
-              tagName: curr.tagName.toLowerCase(),
-              sourceLoc: loc || '',
-              className: curr.className || '',
-              id: curr.id || ''
-            });
-            curr = curr.parentElement;
+        }, 50);
+      }
+    } else if (e.data.type === 'VISUALDEV_UPDATE_TEXT') {
+      const { sourceLoc, text } = e.data;
+      const el = document.querySelector(`[data-source-loc="${sourceLoc}"]`);
+      if (el) {
+        el.innerText = text;
+        setTimeout(() => {
+          if (currentMode !== 'navigate') {
+            updateOutline(el, selectOutline, selectLabel);
           }
-          
-          const rect = selectedElement.getBoundingClientRect();
-          const targetIndex = Math.max(0, Array.from(document.querySelectorAll('[data-source-loc="' + sourceLoc + '"]')).indexOf(selectedElement));
-
-          window.parent.postMessage({
-            type: 'VISUALDEV_SELECT_ELEMENT',
-            sourceLoc: sourceLoc,
-            instanceIndex: targetIndex,
-            className: selectedElement.className || '',
-            tagName: selectedElement.tagName.toLowerCase(),
-            text: selectedElement.innerText || '',
-            rect: {
-              top: rect.top,
-              left: rect.left,
-              width: rect.width,
-              height: rect.height
-            },
-            ancestors: ancestors,
-            styles: {
-              backgroundColor: window.getComputedStyle(selectedElement).backgroundColor,
-              color: window.getComputedStyle(selectedElement).color,
-            }
-          }, '*');
+        }, 50);
+      }
+    } else if (e.data.type === 'VISUALDEV_FORCE_SELECT') {
+      const { sourceLoc, instanceIndex } = e.data;
+      const matches = document.querySelectorAll('[data-source-loc="' + sourceLoc + '"]');
+      const targetEl = matches[instanceIndex !== undefined ? instanceIndex : 0] || matches[0];
+      if (targetEl) {
+        selectedElement = targetEl;
+        if (currentMode !== 'navigate') {
+          updateOutline(selectedElement, selectOutline, selectLabel);
         }
+
+        // Re-build ancestors
+        const ancestors = [];
+        let curr = selectedElement;
+        while (curr && curr !== document.body) {
+          const loc = curr.getAttribute('data-source-loc');
+          ancestors.unshift({
+            tagName: curr.tagName.toLowerCase(),
+            sourceLoc: loc || '',
+            className: curr.className || '',
+            id: curr.id || ''
+          });
+          curr = curr.parentElement;
+        }
+        
+        const rect = selectedElement.getBoundingClientRect();
+        const targetIndex = Math.max(0, Array.from(document.querySelectorAll('[data-source-loc="' + sourceLoc + '"]')).indexOf(selectedElement));
+
+        postToParent({
+          type: 'VISUALDEV_SELECT_ELEMENT',
+          sourceLoc: sourceLoc,
+          instanceIndex: targetIndex,
+          className: selectedElement.className || '',
+          tagName: selectedElement.tagName.toLowerCase(),
+          text: selectedElement.innerText || '',
+          rect: {
+            top: rect.top,
+            left: rect.left,
+            width: rect.width,
+            height: rect.height
+          },
+          ancestors: ancestors,
+          styles: {
+            backgroundColor: window.getComputedStyle(selectedElement).backgroundColor,
+            color: window.getComputedStyle(selectedElement).color,
+          }
+        });
       }
     }
   });
