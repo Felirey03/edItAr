@@ -109,10 +109,54 @@ app.get(['/editar-client.js', '/visualdev-client.js'], (req, res) => {
 });
 
 
-// Helper to check if file is text/code
-const isTextFile = (filename) => {
+// Helper to identify sensitive/secret files or hidden folders to block completely
+const isSensitiveFile = (filename, relativePath = '') => {
+  const lowerName = filename.toLowerCase();
+  const lowerPath = relativePath.toLowerCase();
+
+  // Hidden files and folders starting with '.'
+  if (lowerName.startsWith('.')) return true;
+
+  // Sensitive folder paths
+  const blockedDirs = [
+    'node_modules', '.git', '.next', 'dist', 'out', '.gemini', '.atl', '.agents',
+    '.vscode', '.idea', '.editar-backups', 'coverage'
+  ];
+  const pathParts = lowerPath.split('/');
+  if (pathParts.some(part => blockedDirs.includes(part))) return true;
+
+  // Environment, credential, and log files
+  if (
+    lowerName.includes('.env') || 
+    lowerName.endsWith('.key') || 
+    lowerName.endsWith('.pem') || 
+    lowerName.endsWith('.secret') ||
+    lowerName.endsWith('.log')
+  ) {
+    return true;
+  }
+
+  // System, lock files and project root manifest configs
+  if (['package.json', 'package-lock.json', 'yarn.lock', 'pnpm-lock.yaml', 'tsconfig.json'].includes(lowerName)) {
+    return true;
+  }
+
+  // Config files not intended for direct visual UI editing
+  if (
+    (lowerName.endsWith('.config.js') || lowerName.endsWith('.config.mjs') || lowerName.endsWith('.config.cjs')) &&
+    !lowerName.includes('tailwind')
+  ) {
+    return true;
+  }
+
+  return false;
+};
+
+// Helper to check if file is an editable UI code file
+const isEditableUIFile = (filename, relativePath = '') => {
+  if (isSensitiveFile(filename, relativePath)) return false;
   const ext = path.extname(filename).toLowerCase();
-  return ['.js', '.jsx', '.ts', '.tsx', '.css', '.html', '.json', '.md'].includes(ext);
+  return ['.js', '.jsx', '.ts', '.tsx', '.css', '.html'].includes(ext);
 };
 
 // GET /api/tailwind-config - Parse project tailwind config for custom theme tokens
@@ -262,7 +306,7 @@ app.get('/api/tailwind-config', requireEditorSecret, (req, res) => {
 });
 
 
-// GET /api/files - recursively scan project directory
+// GET /api/files - recursively scan project directory for editable UI files
 app.get('/api/files', requireEditorSecret, (req, res) => {
   try {
     const listFiles = (dir, rootDir = dir) => {
@@ -270,29 +314,22 @@ app.get('/api/files', requireEditorSecret, (req, res) => {
       const list = fs.readdirSync(dir);
       list.forEach((file) => {
         const fullPath = path.join(dir, file);
-        const stat = fs.statSync(fullPath);
-        
-        // Skip node_modules, build directories, git config
-        if (
-          file === 'node_modules' || 
-          file === '.git' || 
-          file === '.next' || 
-          file === 'dist' || 
-          file === 'out' || 
-          file === '.gemini'
-        ) {
+        const relativePath = path.relative(rootDir, fullPath).replace(/\\/g, '/');
+
+        if (isSensitiveFile(file, relativePath)) {
           return;
         }
 
+        const stat = fs.statSync(fullPath);
+
         if (stat.isDirectory()) {
           results = results.concat(listFiles(fullPath, rootDir));
-        } else {
-          const relativePath = path.relative(rootDir, fullPath).replace(/\\/g, '/');
+        } else if (isEditableUIFile(file, relativePath)) {
           results.push({
             name: file,
             path: relativePath,
             size: stat.size,
-            isText: isTextFile(file)
+            isText: true
           });
         }
       });
@@ -335,6 +372,15 @@ const resolveFilePath = (file) => {
   const isInside = realTarget === realWorkspace || realTarget.startsWith(realWorkspace + path.sep);
   if (!isInside) {
     const err = new Error('Access denied: Out of workspace bounds');
+    err.statusCode = 403;
+    throw err;
+  }
+
+  // Block access to sensitive files
+  const filename = path.basename(realTarget);
+  const relativePath = path.relative(realWorkspace, realTarget).replace(/\\/g, '/');
+  if (isSensitiveFile(filename, relativePath)) {
+    const err = new Error('Access denied: Sensitive file access blocked');
     err.statusCode = 403;
     throw err;
   }
