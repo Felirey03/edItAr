@@ -5,18 +5,14 @@ export default function Home() {
     <main className="p-8 bg-black text-slate-200 flex flex-col justify-center items-center md:p-16 min-h-screen">
       {/* Hero Section */}
       <div className="text-center max-w-3xl my-8">
-        <span className="px-3 py-1 mb-4 bg-indigo-950/60 text-indigo-400 text-xs italic inline-block rounded-full border border-indigo-800/50 tracking-wider uppercase">
-          Demo de VisualDev
-        </span>
-        <h1 className="text-4xl sm:text-6xl font-bold tracking-tight text-white mb-6">Diseña Visualmente en Tiempo Re</h1>
-        <p className="text-lg text-zinc-400 max-w-2xl mx-auto">
+        <h1 className="mb-2 bg-gray-700 text-cyan-100 text-5xl tracking-tight">HOLa que tal</h1><p className="text-lg text-zinc-400 max-w-2xl mx-auto">
           Haz clic en cualquier elemento para editar su contenido o modificar sus clases de Tailwind directamente sobre el código fuente local.
         </p>
       </div>
       {/* Feature Grid */}
       <div className="grid text-left lg:max-w-5xl lg:w-full my-8 grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <div className="rounded-xl border border-zinc-800 bg-zinc-900/50 p-6 transition-all hover:border-zinc-700">
-          <h2 className="mb-2 text-lg font-semibold text-white">
+          <h2 className="mb-2 text-white text-lg font-semibold text-center">
             Editor Visual
           </h2>
           <p className="m-0 text-sm text-zinc-400">

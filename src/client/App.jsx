@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   Folder, File, Layers, RefreshCw, Smartphone, Monitor, CheckCircle, HelpCircle, Save, Sliders, MousePointer, Type, Move, Image, Lock, AlertTriangle, PanelLeftClose, PanelLeftOpen, RotateCcw, RotateCw,
-  ChevronDown, ChevronRight, X, AlertCircle
+  ChevronDown, ChevronRight, X, AlertCircle, PlusSquare, Trash2
 } from 'lucide-react';
 
 
@@ -186,6 +186,163 @@ function FileTreeNode({ node, level, expandedFolders, toggleFolder, activeFile, 
   );
 }
 
+// Canva-style Element Palette Descriptor
+const COMPONENT_PALETTE = [
+  {
+    category: 'Básicos',
+    items: [
+      {
+        id: 'button-primary',
+        label: 'Botón Primario',
+        description: 'Botón azul interactivo',
+        icon: 'MousePointer',
+        template: {
+          tagName: 'button',
+          className: 'px-5 py-2.5 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition-colors shadow-sm',
+          text: 'Nuevo Botón'
+        }
+      },
+      {
+        id: 'heading-h1',
+        label: 'Título Principal (H1)',
+        description: 'Encabezado grande',
+        icon: 'Type',
+        template: {
+          tagName: 'h1',
+          className: 'text-3xl font-extrabold text-gray-900 tracking-tight mb-2',
+          text: 'Título Principal'
+        }
+      },
+      {
+        id: 'heading-h2',
+        label: 'Subtítulo (H2)',
+        description: 'Encabezado secundario',
+        icon: 'Type',
+        template: {
+          tagName: 'h2',
+          className: 'text-2xl font-bold text-gray-800 mb-2',
+          text: 'Subtítulo de Sección'
+        }
+      },
+      {
+        id: 'paragraph',
+        label: 'Párrafo',
+        description: 'Bloque de texto estándar',
+        icon: 'Type',
+        template: {
+          tagName: 'p',
+          className: 'text-gray-600 text-base leading-relaxed mb-4',
+          text: 'Escribe tu descripción o contenido aquí...'
+        }
+      },
+      {
+        id: 'badge',
+        label: 'Insignia (Badge)',
+        description: 'Etiqueta destacada',
+        icon: 'CheckCircle',
+        template: {
+          tagName: 'span',
+          className: 'inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-semibold bg-blue-100 text-blue-800',
+          text: 'Nuevo Tag'
+        }
+      }
+    ]
+  },
+  {
+    category: 'Estructura & Layout',
+    items: [
+      {
+        id: 'card',
+        label: 'Tarjeta (Card)',
+        description: 'Contenedor blanco con borde y sombra',
+        icon: 'Folder',
+        template: {
+          tagName: 'div',
+          className: 'p-6 bg-white rounded-xl border border-gray-200 shadow-sm mb-4',
+          children: [
+            {
+              tagName: 'h3',
+              className: 'text-lg font-bold text-gray-900 mb-2',
+              text: 'Título de Tarjeta'
+            },
+            {
+              tagName: 'p',
+              className: 'text-gray-600 text-sm mb-4',
+              text: 'Contenido explicativo dentro de la tarjeta.'
+            }
+          ]
+        }
+      },
+      {
+        id: 'flex-col',
+        label: 'Contenedor Flex',
+        description: 'Columna con espaciado vertical',
+        icon: 'Layers',
+        template: {
+          tagName: 'div',
+          className: 'flex flex-col gap-4 p-4 bg-slate-50 rounded-lg border border-slate-200 mb-4',
+          text: 'Contenedor Flex'
+        }
+      },
+      {
+        id: 'grid-2col',
+        label: 'Grid 2 Columnas',
+        description: 'Disposición en 2 columnas',
+        icon: 'Monitor',
+        template: {
+          tagName: 'div',
+          className: 'grid grid-cols-1 md:grid-cols-2 gap-4 p-4 mb-4',
+          children: [
+            {
+              tagName: 'div',
+              className: 'p-4 bg-white rounded-lg border border-gray-200',
+              text: 'Columna 1'
+            },
+            {
+              tagName: 'div',
+              className: 'p-4 bg-white rounded-lg border border-gray-200',
+              text: 'Columna 2'
+            }
+          ]
+        }
+      }
+    ]
+  },
+  {
+    category: 'Formularios y Medios',
+    items: [
+      {
+        id: 'image-sample',
+        label: 'Imagen de Muestra',
+        description: 'Imagen con esquinas redondeadas',
+        icon: 'Image',
+        template: {
+          tagName: 'img',
+          className: 'w-full h-48 object-cover rounded-lg shadow-sm mb-4',
+          attributes: {
+            src: 'https://images.unsplash.com/photo-1579546929518-9e396f3cc809?w=800',
+            alt: 'Imagen de muestra'
+          }
+        }
+      },
+      {
+        id: 'input-text',
+        label: 'Campo Texto (Input)',
+        description: 'Input de formulario',
+        icon: 'Sliders',
+        template: {
+          tagName: 'input',
+          className: 'w-full px-3 py-2 border border-gray-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 mb-4',
+          attributes: {
+            type: 'text',
+            placeholder: 'Escribe aquí...'
+          }
+        }
+      }
+    ]
+  }
+];
+
 export default function App() {
   const [files, setFiles] = useState([]);
   const [activeFile, setActiveFile] = useState('');
@@ -205,7 +362,24 @@ export default function App() {
   const [isIframeLoaded, setIsIframeLoaded] = useState(false);
   const [viewMode, setViewMode] = useState('desktop');
   const [editorMode, setEditorMode] = useState('edit'); // 'edit' | 'navigate'
+  const [draggedTemplate, setDraggedTemplate] = useState(null);
+  const [activeColorPicker, setActiveColorPicker] = useState(null); // 'bg' | 'text' | null
 
+  const TAILWIND_COLORS = {
+    'transparent': 'transparent', 'white': '#ffffff', 'black': '#000000',
+    'slate-100': '#f1f5f9', 'slate-300': '#cbd5e1', 'slate-500': '#64748b', 'slate-700': '#334155', 'slate-900': '#0f172a',
+    'gray-100': '#f3f4f6', 'gray-300': '#d1d5db', 'gray-500': '#6b7280', 'gray-700': '#374151', 'gray-900': '#111827',
+    'red-100': '#fee2e2', 'red-300': '#fca5a5', 'red-500': '#ef4444', 'red-700': '#b91c1c', 'red-900': '#7f1d1d',
+    'orange-100': '#ffedd5', 'orange-300': '#fdba74', 'orange-500': '#f97316', 'orange-700': '#c2410c', 'orange-900': '#7c2d12',
+    'yellow-100': '#fef9c3', 'yellow-300': '#fde047', 'yellow-500': '#eab308', 'yellow-700': '#a16207', 'yellow-900': '#713f12',
+    'green-100': '#dcfce7', 'green-300': '#86efac', 'green-500': '#22c55e', 'green-700': '#15803d', 'green-900': '#14532d',
+    'teal-100': '#ccfbf1', 'teal-300': '#5eead4', 'teal-500': '#14b8a6', 'teal-700': '#0f766e', 'teal-900': '#134e4a',
+    'cyan-100': '#cffafe', 'cyan-300': '#67e8f9', 'cyan-500': '#06b6d4', 'cyan-700': '#0e7490', 'cyan-900': '#164e63',
+    'blue-100': '#dbeafe', 'blue-300': '#93c5fd', 'blue-500': '#3b82f6', 'blue-700': '#1d4ed8', 'blue-900': '#1e3a8a',
+    'indigo-100': '#e0e7ff', 'indigo-300': '#a5b4fc', 'indigo-500': '#6366f1', 'indigo-700': '#4338ca', 'indigo-900': '#312e81',
+    'purple-100': '#f3e8ff', 'purple-300': '#d8b4fe', 'purple-500': '#a855f7', 'purple-700': '#7e22ce', 'purple-900': '#581c87',
+    'pink-100': '#fce7f3', 'pink-300': '#f9a8d4', 'pink-500': '#ec4899', 'pink-700': '#be185d', 'pink-900': '#831843'
+  };
   const addToast = (message, type = 'error') => {
     const id = Date.now().toString() + Math.random().toString().substring(2, 6);
     setToasts(prev => [...prev, { id, message, type }]);
@@ -345,18 +519,29 @@ export default function App() {
       future: [currentTx, ...history.future]
     });
 
-    const isText = currentTx.prevText !== undefined;
-    const undoTransaction = {
-      sourceLoc: currentTx.sourceLoc,
-      file: currentTx.file,
-      line: currentTx.line,
-      column: currentTx.column,
-      className: currentTx.prevClassName,
-      text: currentTx.prevText,
-      parsed: currentTx.prevParsed
-    };
-
-    await applyTransactionState(undoTransaction, true, isText);
+    if (currentTx.type === 'structural') {
+      try {
+        await fetch('/api/write-file-content', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file: currentTx.file, code: currentTx.prevCode })
+        });
+      } catch (err) {
+        console.error('Error undoing structural change:', err);
+      }
+    } else {
+      const isText = currentTx.prevText !== undefined;
+      const undoTransaction = {
+        sourceLoc: currentTx.sourceLoc,
+        file: currentTx.file,
+        line: currentTx.line,
+        column: currentTx.column,
+        className: currentTx.prevClassName,
+        text: currentTx.prevText,
+        parsed: currentTx.prevParsed
+      };
+      await applyTransactionState(undoTransaction, true, isText);
+    }
   };
 
   const handleRedo = async () => {
@@ -371,18 +556,29 @@ export default function App() {
       future: newFuture
     });
 
-    const isText = nextTx.newText !== undefined;
-    const redoTransaction = {
-      sourceLoc: nextTx.sourceLoc,
-      file: nextTx.file,
-      line: nextTx.line,
-      column: nextTx.column,
-      className: nextTx.newClassName,
-      text: nextTx.newText,
-      parsed: nextTx.newParsed
-    };
-
-    await applyTransactionState(redoTransaction, true, isText);
+    if (nextTx.type === 'structural') {
+      try {
+        await fetch('/api/write-file-content', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ file: nextTx.file, code: nextTx.newCode })
+        });
+      } catch (err) {
+        console.error('Error redoing structural change:', err);
+      }
+    } else {
+      const isText = nextTx.newText !== undefined;
+      const redoTransaction = {
+        sourceLoc: nextTx.sourceLoc,
+        file: nextTx.file,
+        line: nextTx.line,
+        column: nextTx.column,
+        className: nextTx.newClassName,
+        text: nextTx.newText,
+        parsed: nextTx.newParsed
+      };
+      await applyTransactionState(redoTransaction, true, isText);
+    }
   };
 
   // Helper to clear selection across parent app and preview iframe
@@ -529,6 +725,15 @@ export default function App() {
           .catch(err => {
             console.error('Error analyzing element:', err);
           });
+      } else if (e.data && e.data.type === 'VISUALDEV_DROP_ELEMENT') {
+        const { sourceLoc, element, position } = e.data;
+        if (sourceLoc && element) {
+          const parts = sourceLoc.split(':');
+          const file = parts[0];
+          const line = parseInt(parts[1]);
+          const column = parseInt(parts[2]);
+          handleInsertElement(element, { file, line, column }, position || 'inside');
+        }
       } else if (e.data && e.data.type === 'VISUALDEV_KEY_DOWN') {
         const { key, ctrlKey, metaKey, shiftKey } = e.data;
         if (key === 'Escape') {
@@ -540,18 +745,24 @@ export default function App() {
             handleUndo();
           } else if ((cmdOrCtrl && key.toLowerCase() === 'y') || (cmdOrCtrl && shiftKey && key.toLowerCase() === 'z')) {
             handleRedo();
+          } else if (key === 'Delete' || key === 'Backspace') {
+            handleDeleteElement();
           }
         }
       } else if (e.data && e.data.type === 'VISUALDEV_URL_CHANGED') {
         if (e.data.url) {
           setTargetUrl(e.data.url);
         }
+      } else if (e.data && e.data.type === 'VISUALDEV_UPDATE_RECT') {
+        if (e.data.rect) {
+          setSelectedElement(prev => prev ? { ...prev, rect: e.data.rect } : null);
+        }
       }
     };
 
     window.addEventListener('message', handleIframeMessage);
     return () => window.removeEventListener('message', handleIframeMessage);
-  }, [history]);
+  }, [history, selectedElement]);
 
   // Sync className change with code in background and update local iframe DOM
   const updateStyleClass = async (updatedParsed) => {
@@ -613,6 +824,92 @@ export default function App() {
       console.error('Network error writing style:', error);
       setSaveStatus('error');
       addToast('Network error while saving style changes', 'error');
+    }
+  };
+
+  // Helper to insert a new element from Canva palette via AST
+  const handleInsertElement = async (elementTemplate, targetElementOverride = null, insertPosition = 'inside') => {
+    let target = targetElementOverride || selectedElement;
+
+    // Automatic fallback if no element is selected on canvas
+    if (!target) {
+      const fileToUse = activeFile || (files.length > 0 ? files[0].path : 'demo-app/src/app/page.jsx');
+      target = { file: fileToUse, line: 5, column: 1 };
+    }
+
+    const { file, line, column } = target;
+    setSaveStatus('saving');
+
+    try {
+      const res = await fetch('/api/insert-element', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          file,
+          line,
+          column,
+          position: insertPosition,
+          element: elementTemplate
+        })
+      });
+
+      const data = await res.json();
+      if (data && data.success) {
+        pushHistoryState({
+          type: 'structural',
+          file,
+          prevCode: data.prevCode,
+          newCode: data.newCode
+        });
+        setSaveStatus('saved');
+        addToast('¡Elemento insertado con éxito!', 'success');
+        setTimeout(() => setSaveStatus('idle'), 2000);
+        // Permitir que Next.js HMR / Fast Refresh actualice el DOM en vivo
+        // sin forzar una recarga completa del iframe que puede cortar la conexión WebSocket.
+      } else {
+        setSaveStatus('error');
+        addToast(data?.error || 'No se pudo insertar el elemento AST', 'error');
+      }
+    } catch (err) {
+      console.error('Error inserting element:', err);
+      setSaveStatus('error');
+      addToast('Error de red al insertar el elemento', 'error');
+    }
+  };
+
+  const handleDeleteElement = async () => {
+    if (!selectedElement) return;
+
+    const { file, line, column } = selectedElement;
+    setSaveStatus('saving');
+
+    try {
+      const res = await fetch('/api/delete-element', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ file, line, column })
+      });
+
+      const data = await res.json();
+      if (data && data.success) {
+        pushHistoryState({
+          type: 'structural',
+          file,
+          prevCode: data.prevCode,
+          newCode: data.newCode
+        });
+        setSaveStatus('saved');
+        addToast('Elemento eliminado', 'success');
+        clearSelection();
+        setTimeout(() => setSaveStatus('idle'), 2000);
+      } else {
+        setSaveStatus('error');
+        addToast(data?.error || 'No se pudo eliminar el elemento', 'error');
+      }
+    } catch (err) {
+      console.error('Error deleting element:', err);
+      setSaveStatus('error');
+      addToast('Error de red al eliminar el elemento', 'error');
     }
   };
 
@@ -777,12 +1074,26 @@ export default function App() {
     setIframeUrl(`${targetUrl}?t=${Date.now()}`);
   };
 
+  const windowHeight = typeof window !== 'undefined' ? window.innerHeight : 800;
   const isTopClipped = selectedElement && selectedElement.rect && selectedElement.rect.top < 55;
-  const toolbarTop = selectedElement && selectedElement.rect 
-    ? (isTopClipped ? (selectedElement.rect.top + selectedElement.rect.height + 8) : (selectedElement.rect.top - 46))
-    : 0;
+  const isHugeElement = selectedElement && selectedElement.rect && selectedElement.rect.height > windowHeight * 0.6;
+  
+  let toolbarTop = 0;
+  if (selectedElement && selectedElement.rect) {
+    if (isTopClipped || isHugeElement) {
+      // Posición interna segura arriba
+      toolbarTop = Math.max(16, selectedElement.rect.top + 16);
+    } else {
+      // Arriba del elemento
+      toolbarTop = selectedElement.rect.top - 46;
+    }
+    // Límite inferior para que nunca desaparezca abajo
+    toolbarTop = Math.min(toolbarTop, windowHeight - 100);
+  }
+  const iframeWidth = iframeRef.current ? iframeRef.current.clientWidth : (typeof window !== 'undefined' ? window.innerWidth - 320 : 1000);
+  const toolbarWidth = 550; // Aprox ancho de la toolbar con todos los botones
   const toolbarLeft = selectedElement && selectedElement.rect 
-    ? Math.max(8, selectedElement.rect.left)
+    ? Math.max(8, Math.min(selectedElement.rect.left, iframeWidth - toolbarWidth))
     : 0;
 
   return (
@@ -935,22 +1246,100 @@ export default function App() {
         <aside className={`sidebar ${isSidebarCollapsed ? 'collapsed' : ''}`}>
           <div style={{ display: 'flex', borderBottom: '1px solid var(--border-color)', padding: '4px' }}>
             <button 
+              className={`tab-button ${leftSidebarTab === 'elements' ? 'active' : ''}`}
+              style={{ flex: 1, padding: '6px', fontSize: '0.75rem' }}
+              onClick={() => setLeftSidebarTab('elements')}
+            >
+              Elementos
+            </button>
+            <button 
               className={`tab-button ${leftSidebarTab === 'files' ? 'active' : ''}`}
-              style={{ flex: 1, padding: '6px', fontSize: '0.8rem' }}
+              style={{ flex: 1, padding: '6px', fontSize: '0.75rem' }}
               onClick={() => setLeftSidebarTab('files')}
             >
               Archivos
             </button>
             <button 
               className={`tab-button ${leftSidebarTab === 'layers' ? 'active' : ''}`}
-              style={{ flex: 1, padding: '6px', fontSize: '0.8rem' }}
+              style={{ flex: 1, padding: '6px', fontSize: '0.75rem' }}
               onClick={() => setLeftSidebarTab('layers')}
             >
-              Capas (DOM)
+              Capas
             </button>
           </div>
 
-          {leftSidebarTab === 'files' ? (
+          {leftSidebarTab === 'elements' ? (
+            <div style={{ padding: '0.75rem', height: 'calc(100% - 40px)', overflowY: 'auto' }}>
+              <div className="sidebar-title" style={{ marginBottom: '0.75rem' }}>
+                <PlusSquare size={14} />
+                <span>Paleta de Elementos</span>
+              </div>
+
+              {selectedElement ? (
+                <div style={{ fontSize: '0.75rem', padding: '6px 10px', backgroundColor: 'var(--accent-light)', borderRadius: '6px', marginBottom: '1rem', color: 'var(--accent-hover)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <CheckCircle size={13} />
+                  <span>Insertando en &lt;{selectedElement.tagName}&gt;</span>
+                </div>
+              ) : (
+                <div style={{ fontSize: '0.75rem', padding: '6px 10px', backgroundColor: 'var(--bg-secondary)', borderRadius: '6px', marginBottom: '1rem', color: 'var(--text-muted)', display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <HelpCircle size={13} />
+                  <span>Haz clic en un elemento del lienzo o arrastra para ubicarlo</span>
+                </div>
+              )}
+
+              {COMPONENT_PALETTE.map((group) => (
+                <div key={group.category} style={{ marginBottom: '1.25rem' }}>
+                  <div style={{ fontSize: '0.7rem', textTransform: 'uppercase', letterSpacing: '0.05em', color: 'var(--text-muted)', marginBottom: '0.5rem', fontWeight: 600 }}>
+                    {group.category}
+                  </div>
+                  <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                    {group.items.map((item) => (
+                      <div
+                        key={item.id}
+                        className="component-card"
+                        draggable
+                        onDragStart={(e) => {
+                          setDraggedTemplate(item.template);
+                          e.dataTransfer.setData('text/plain', JSON.stringify(item.template));
+                          if (iframeRef.current && iframeRef.current.contentWindow) {
+                            iframeRef.current.contentWindow.postMessage({
+                              type: 'VISUALDEV_START_DRAG',
+                              element: item.template
+                            }, '*');
+                          }
+                        }}
+                        onDragEnd={() => {
+                          setDraggedTemplate(null);
+                          if (iframeRef.current && iframeRef.current.contentWindow) {
+                            iframeRef.current.contentWindow.postMessage({
+                              type: 'VISUALDEV_END_DRAG'
+                            }, '*');
+                          }
+                        }}
+                        onClick={() => handleInsertElement(item.template)}
+                        title="Haz clic para insertar o arrastra al lienzo"
+                      >
+                        <div className="component-card-icon">
+                          {item.icon === 'MousePointer' && <MousePointer size={16} />}
+                          {item.icon === 'Type' && <Type size={16} />}
+                          {item.icon === 'CheckCircle' && <CheckCircle size={16} />}
+                          {item.icon === 'Folder' && <Folder size={16} />}
+                          {item.icon === 'Layers' && <Layers size={16} />}
+                          {item.icon === 'Monitor' && <Monitor size={16} />}
+                          {item.icon === 'Image' && <Image size={16} />}
+                          {item.icon === 'Sliders' && <Sliders size={16} />}
+                        </div>
+                        <div style={{ flex: 1, minWidth: 0 }}>
+                          <div style={{ fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-primary)' }}>{item.label}</div>
+                          <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.description}</div>
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : leftSidebarTab === 'files' ? (
             <>
               <div className="sidebar-title">
                 <Folder size={14} />
@@ -1044,7 +1433,8 @@ export default function App() {
             style={{ 
               width: (viewMode === 'mobile' && activeTab === 'visual') ? '375px' : '100%', 
               height: '100%', 
-              transition: 'width 0.3s ease' 
+              transition: 'width 0.3s ease',
+              position: 'relative'
             }}
           >
             {activeTab === 'visual' ? (
@@ -1064,6 +1454,55 @@ export default function App() {
                   }}
                   id="preview-iframe"
                 />
+
+                {/* Drag Overlay over iframe */}
+                {draggedTemplate && (
+                  <div
+                    style={{
+                      position: 'absolute',
+                      inset: 0,
+                      zIndex: 999999,
+                      cursor: 'copy'
+                    }}
+                    onDragOver={(e) => {
+                      e.preventDefault();
+                      e.dataTransfer.dropEffect = 'copy';
+                      if (iframeRef.current) {
+                        const rect = iframeRef.current.getBoundingClientRect();
+                        const x = e.clientX - rect.left;
+                        const y = e.clientY - rect.top;
+                        iframeRef.current.contentWindow.postMessage({
+                          type: 'VISUALDEV_DRAG_HOVER',
+                          x,
+                          y,
+                          element: draggedTemplate
+                        }, '*');
+                      }
+                    }}
+                    onDrop={(e) => {
+                      e.preventDefault();
+                      if (iframeRef.current) {
+                        const rect = iframeRef.current.getBoundingClientRect();
+                        const x = e.clientX - rect.left;
+                        const y = e.clientY - rect.top;
+                        iframeRef.current.contentWindow.postMessage({
+                          type: 'VISUALDEV_DRAG_DROP',
+                          x,
+                          y,
+                          element: draggedTemplate
+                        }, '*');
+                      }
+                      setDraggedTemplate(null);
+                    }}
+                    onDragLeave={() => {
+                      if (iframeRef.current && iframeRef.current.contentWindow) {
+                        iframeRef.current.contentWindow.postMessage({
+                          type: 'VISUALDEV_DRAG_END'
+                        }, '*');
+                      }
+                    }}
+                  />
+                )}
 
                 {/* Floating Quick Editing Toolbar */}
                 {selectedElement && selectedElement.rect && (
@@ -1134,31 +1573,99 @@ export default function App() {
                     {/* Background & Text Quick Colors */}
                     <div className="floating-toolbar-divider" />
                     <div className="floating-toolbar-group">
-                      <select
-                        className="floating-toolbar-select"
-                        value={parsedClasses.bg}
-                        onChange={(e) => handleStyleChange('bg', e.target.value)}
-                        title="Fondo"
-                        aria-label="Color de fondo rápido"
-                      >
-                        <option value="">Fondo</option>
-                        {['bg-transparent', 'bg-white', 'bg-black', 'bg-slate-100', 'bg-slate-800', 'bg-red-500', 'bg-green-500', 'bg-blue-500', 'bg-indigo-500', 'bg-purple-500'].map(v => (
-                          <option key={v} value={v}>{v.replace('bg-', '')}</option>
-                        ))}
-                      </select>
+                      <div style={{ position: 'relative' }}>
+                        <button
+                          className={`floating-toolbar-btn ${activeColorPicker === 'bg' ? 'active' : ''}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveColorPicker(prev => prev === 'bg' ? null : 'bg');
+                          }}
+                          title="Color de Fondo"
+                          style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                        >
+                          <div style={{ 
+                            width: 14, height: 14, borderRadius: '50%', 
+                            border: '1px solid var(--border-color)', 
+                            backgroundColor: parsedClasses.bg && TAILWIND_COLORS[parsedClasses.bg.replace('bg-', '')] 
+                              ? TAILWIND_COLORS[parsedClasses.bg.replace('bg-', '')] 
+                              : 'transparent' 
+                          }} />
+                          Fondo
+                        </button>
+                        
+                        {activeColorPicker === 'bg' && (
+                          <div className="color-popover" onClick={(e) => e.stopPropagation()}>
+                            {Object.entries(TAILWIND_COLORS).map(([name, hex]) => (
+                              <button
+                                key={name}
+                                className="color-swatch"
+                                style={{ backgroundColor: hex }}
+                                title={name}
+                                onClick={() => {
+                                  handleStyleChange('bg', name === 'transparent' ? 'bg-transparent' : `bg-${name}`);
+                                  setActiveColorPicker(null);
+                                }}
+                              >
+                                {name === 'transparent' && <span style={{ color: '#888', fontSize: '12px' }}>✖</span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+
+                      <div style={{ position: 'relative' }}>
+                        <button
+                          className={`floating-toolbar-btn ${activeColorPicker === 'text' ? 'active' : ''}`}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setActiveColorPicker(prev => prev === 'text' ? null : 'text');
+                          }}
+                          title="Color de Texto"
+                          style={{ display: 'flex', alignItems: 'center', gap: '4px' }}
+                        >
+                          <div style={{ 
+                            width: 14, height: 14, borderRadius: '50%', 
+                            border: '1px solid var(--border-color)', 
+                            backgroundColor: parsedClasses.textColor && TAILWIND_COLORS[parsedClasses.textColor.replace('text-', '')] 
+                              ? TAILWIND_COLORS[parsedClasses.textColor.replace('text-', '')] 
+                              : 'transparent' 
+                          }} />
+                          Texto
+                        </button>
+
+                        {activeColorPicker === 'text' && (
+                          <div className="color-popover" style={{ left: '-50px' }} onClick={(e) => e.stopPropagation()}>
+                            {Object.entries(TAILWIND_COLORS).map(([name, hex]) => (
+                              <button
+                                key={name}
+                                className="color-swatch"
+                                style={{ backgroundColor: name === 'transparent' ? 'transparent' : hex }}
+                                title={name}
+                                onClick={() => {
+                                  handleStyleChange('textColor', name === 'transparent' ? '' : `text-${name}`);
+                                  setActiveColorPicker(null);
+                                }}
+                              >
+                                {name === 'transparent' ? <span style={{ color: '#888', fontSize: '12px' }}>✖</span> : <span style={{ color: ['white', 'slate-200', 'transparent'].includes(name) ? '#000' : '#fff', fontWeight: 'bold' }}>A</span>}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                      </div>
                       
-                      <select
-                        className="floating-toolbar-select"
-                        value={parsedClasses.textColor}
-                        onChange={(e) => handleStyleChange('textColor', e.target.value)}
-                        title="Texto"
-                        aria-label="Color de texto rápido"
+                      <div className="floating-toolbar-divider" />
+                      
+                      <button 
+                        className="floating-toolbar-btn"
+                        style={{ color: '#ef4444' }}
+                        title="Eliminar elemento (Supr)"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          handleDeleteElement();
+                        }}
                       >
-                        <option value="">Texto</option>
-                        {['text-white', 'text-black', 'text-slate-400', 'text-red-500', 'text-green-500', 'text-blue-500', 'text-indigo-500'].map(v => (
-                          <option key={v} value={v}>{v.replace('text-', '')}</option>
-                        ))}
-                      </select>
+                        <Trash2 size={13} />
+                      </button>
                     </div>
                   </div>
                 )}

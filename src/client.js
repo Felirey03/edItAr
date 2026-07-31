@@ -197,15 +197,27 @@
   }, true);
 
   // Sync positions on scroll or resize
+  const notifyRectUpdate = () => {
+    if (selectedElement) {
+      const rect = selectedElement.getBoundingClientRect();
+      postToParent({
+        type: 'VISUALDEV_UPDATE_RECT',
+        rect: { top: rect.top, left: rect.left, width: rect.width, height: rect.height }
+      });
+    }
+  };
+
   window.addEventListener('scroll', () => {
     if (currentMode === 'navigate') return;
     updateOutline(hoverElement, hoverOutline);
     updateOutline(selectedElement, selectOutline, selectLabel);
+    notifyRectUpdate();
   });
   window.addEventListener('resize', () => {
     if (currentMode === 'navigate') return;
     updateOutline(hoverElement, hoverOutline);
     updateOutline(selectedElement, selectOutline, selectLabel);
+    notifyRectUpdate();
   });
 
   // Forward keydown events to parent window (Escape, Undo/Redo)
@@ -224,7 +236,12 @@
       return;
     }
 
-    if (e.key === 'Escape' || ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'z' || e.key.toLowerCase() === 'y'))) {
+    if (
+      e.key === 'Escape' || 
+      e.key === 'Delete' || 
+      e.key === 'Backspace' ||
+      ((e.ctrlKey || e.metaKey) && (e.key.toLowerCase() === 'z' || e.key.toLowerCase() === 'y'))
+    ) {
       postToParent({
         type: 'VISUALDEV_KEY_DOWN',
         key: e.key,
@@ -235,9 +252,203 @@
     }
   });
 
+  // ── Drag & Drop: position-aware insertion with visual indicator ──
+  let activeDragElement = null;
+  let lastDropTarget = null;
+  let lastDropPosition = null; // 'before' | 'after' | 'inside'
+
+  // Visual drop indicator line
+  const dropIndicator = document.createElement('div');
+  dropIndicator.style.position = 'absolute';
+  dropIndicator.style.height = '3px';
+  dropIndicator.style.backgroundColor = '#3b82f6';
+  dropIndicator.style.borderRadius = '2px';
+  dropIndicator.style.pointerEvents = 'none';
+  dropIndicator.style.zIndex = '9999999';
+  dropIndicator.style.display = 'none';
+  dropIndicator.style.transition = 'top 0.08s ease, left 0.08s ease, width 0.08s ease';
+  dropIndicator.style.boxShadow = '0 0 6px rgba(59, 130, 246, 0.6)';
+  document.body.appendChild(dropIndicator);
+
+  // Small label next to indicator
+  const dropLabel = document.createElement('div');
+  dropLabel.style.position = 'absolute';
+  dropLabel.style.background = '#3b82f6';
+  dropLabel.style.color = '#fff';
+  dropLabel.style.fontSize = '9px';
+  dropLabel.style.fontWeight = '600';
+  dropLabel.style.padding = '1px 5px';
+  dropLabel.style.borderRadius = '3px';
+  dropLabel.style.pointerEvents = 'none';
+  dropLabel.style.zIndex = '9999999';
+  dropLabel.style.display = 'none';
+  dropLabel.style.letterSpacing = '0.02em';
+  document.body.appendChild(dropLabel);
+
+  function findDropTarget(el) {
+    while (el && el !== document.body) {
+      if (el.getAttribute && el.getAttribute('data-source-loc')) return el;
+      el = el.parentElement;
+    }
+    return null;
+  }
+
+  function computeDropPosition(el, mouseY) {
+    const rect = el.getBoundingClientRect();
+    const relativeY = mouseY - rect.top;
+    const height = rect.height;
+
+    // Three zones: top 30% = before, middle 40% = inside, bottom 30% = after
+    if (relativeY < height * 0.3) return 'before';
+    if (relativeY > height * 0.7) return 'after';
+    return 'inside';
+  }
+
+  function showDropIndicator(el, position) {
+    const rect = el.getBoundingClientRect();
+    const scrollX = window.scrollX;
+    const scrollY = window.scrollY;
+
+    dropIndicator.style.display = 'block';
+    dropIndicator.style.left = `${rect.left + scrollX}px`;
+    dropIndicator.style.width = `${rect.width}px`;
+    dropLabel.style.display = 'block';
+
+    if (position === 'before') {
+      dropIndicator.style.top = `${rect.top + scrollY - 2}px`;
+      dropLabel.textContent = '↑ Insert before';
+      dropLabel.style.top = `${rect.top + scrollY - 16}px`;
+      dropLabel.style.left = `${rect.left + scrollX}px`;
+      // Reset any inside-highlight
+      hoverOutline.style.display = 'none';
+    } else if (position === 'after') {
+      dropIndicator.style.top = `${rect.bottom + scrollY - 1}px`;
+      dropLabel.textContent = '↓ Insert after';
+      dropLabel.style.top = `${rect.bottom + scrollY + 2}px`;
+      dropLabel.style.left = `${rect.left + scrollX}px`;
+      hoverOutline.style.display = 'none';
+    } else {
+      // 'inside' — highlight container, hide line
+      dropIndicator.style.display = 'none';
+      dropLabel.textContent = '⊕ Insert inside';
+      dropLabel.style.top = `${rect.top + scrollY - 16}px`;
+      dropLabel.style.left = `${rect.left + scrollX}px`;
+      updateOutline(el, hoverOutline);
+    }
+  }
+
+  function hideDropIndicator() {
+    dropIndicator.style.display = 'none';
+    dropLabel.style.display = 'none';
+    hoverOutline.style.display = 'none';
+    lastDropTarget = null;
+    lastDropPosition = null;
+  }
+
+  document.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    if (currentMode === 'navigate') return;
+
+    const target = findDropTarget(e.target);
+    if (!target) {
+      hideDropIndicator();
+      return;
+    }
+
+    const position = computeDropPosition(target, e.clientY);
+    lastDropTarget = target;
+    lastDropPosition = position;
+    showDropIndicator(target, position);
+  });
+
+  document.addEventListener('dragleave', (e) => {
+    // Only hide if actually leaving the document
+    if (e.relatedTarget === null || !document.contains(e.relatedTarget)) {
+      hideDropIndicator();
+    }
+  });
+
+  document.addEventListener('drop', (e) => {
+    e.preventDefault();
+    hideDropIndicator();
+
+    const target = findDropTarget(e.target);
+    if (!target) return;
+
+    const targetLoc = target.getAttribute('data-source-loc');
+    if (!targetLoc) return;
+
+    const position = lastDropPosition || computeDropPosition(target, e.clientY);
+
+    let elementData = activeDragElement;
+    if (!elementData) {
+      try {
+        const raw = e.dataTransfer.getData('text/plain');
+        if (raw) elementData = JSON.parse(raw);
+      } catch (err) {
+        console.error('[VisualDev Client] Invalid drop data:', err);
+      }
+    }
+
+    if (elementData) {
+      postToParent({
+        type: 'VISUALDEV_DROP_ELEMENT',
+        sourceLoc: targetLoc,
+        position: position,
+        element: elementData
+      });
+      activeDragElement = null;
+    }
+  });
+
   // Listen for updates from the Editor App
   window.addEventListener('message', (e) => {
     if (!e.data) return;
+
+    if (e.data.type === 'VISUALDEV_START_DRAG') {
+      activeDragElement = e.data.element;
+      return;
+    } else if (e.data.type === 'VISUALDEV_END_DRAG') {
+      activeDragElement = null;
+      hideDropIndicator();
+      return;
+    } else if (e.data.type === 'VISUALDEV_DRAG_HOVER') {
+      const { x, y, element } = e.data;
+      if (element) activeDragElement = element;
+      const rawTarget = document.elementFromPoint(x, y);
+      const target = findDropTarget(rawTarget);
+      if (!target) {
+        hideDropIndicator();
+        return;
+      }
+      const position = computeDropPosition(target, y);
+      lastDropTarget = target;
+      lastDropPosition = position;
+      showDropIndicator(target, position);
+      return;
+    } else if (e.data.type === 'VISUALDEV_DRAG_DROP') {
+      const { x, y, element } = e.data;
+      const elementData = element || activeDragElement;
+      hideDropIndicator();
+      const rawTarget = document.elementFromPoint(x, y);
+      const target = findDropTarget(rawTarget);
+      if (target && elementData) {
+        const targetLoc = target.getAttribute('data-source-loc');
+        const position = lastDropPosition || computeDropPosition(target, y);
+        postToParent({
+          type: 'VISUALDEV_DROP_ELEMENT',
+          sourceLoc: targetLoc,
+          position: position,
+          element: elementData
+        });
+      }
+      activeDragElement = null;
+      return;
+    } else if (e.data.type === 'VISUALDEV_DRAG_END') {
+      hideDropIndicator();
+      activeDragElement = null;
+      return;
+    }
 
     // Process Handshake INIT
     if (e.data.type === 'VISUALDEV_INIT') {

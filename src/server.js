@@ -631,6 +631,231 @@ app.post('/api/edit-style', requireEditorSecret, (req, res) => {
   }
 });
 
+// Helper to construct JSX Element AST nodes from template descriptor
+const buildASTFromTemplate = (template) => {
+  if (!template || !template.tagName) {
+    throw new Error('Invalid element template: tagName is required');
+  }
+
+  const { tagName, className = '', text = '', attributes = {}, children = [] } = template;
+
+  const astAttributes = [];
+  if (className) {
+    astAttributes.push(
+      b.jsxAttribute(b.jsxIdentifier('className'), b.stringLiteral(className))
+    );
+  }
+
+  Object.keys(attributes).forEach((key) => {
+    if (key !== 'className') {
+      astAttributes.push(
+        b.jsxAttribute(b.jsxIdentifier(key), b.stringLiteral(String(attributes[key])))
+      );
+    }
+  });
+
+  const isSelfClosing = ['img', 'input', 'hr', 'br'].includes(tagName.toLowerCase());
+
+  const astChildren = [];
+  if (text && !isSelfClosing) {
+    astChildren.push(b.jsxText(text));
+  }
+
+  if (Array.isArray(children) && children.length > 0 && !isSelfClosing) {
+    children.forEach((child) => {
+      astChildren.push(buildASTFromTemplate(child));
+    });
+  }
+
+  const openingElement = b.jsxOpeningElement(b.jsxIdentifier(tagName), astAttributes, isSelfClosing);
+  const closingElement = isSelfClosing ? null : b.jsxClosingElement(b.jsxIdentifier(tagName));
+
+  return b.jsxElement(openingElement, closingElement, astChildren);
+};
+
+// POST /api/insert-element - AST manipulation to insert a new JSX element
+app.post('/api/insert-element', requireEditorSecret, (req, res) => {
+  const { file, line, column, position = 'inside', element } = req.body;
+
+  if (!file || !line || !column || !element) {
+    return res.status(400).json({ 
+      error: 'Missing required parameters (file, line, column, element)' 
+    });
+  }
+
+  try {
+    const absolutePath = resolveFilePath(file);
+    const code = fs.readFileSync(absolutePath, 'utf8');
+    const ast = recast.parse(code, { parser: babelParser });
+
+    let targetPathNode = null;
+    let minDistance = Infinity;
+
+    traverse(ast, {
+      JSXElement(jsxPath) {
+        const openingEl = jsxPath.node.openingElement;
+        const { loc } = openingEl;
+        if (!loc) return;
+
+        if (loc.start.line === parseInt(line)) {
+          const distance = Math.abs(loc.start.column - (parseInt(column) - 1));
+          if (distance < minDistance) {
+            minDistance = distance;
+            targetPathNode = jsxPath;
+          }
+        }
+      }
+    });
+
+    if (!targetPathNode) {
+      return res.status(404).json({ 
+        error: `Could not find JSX element on line ${line} in file ${file}` 
+      });
+    }
+
+    const newASTNode = buildASTFromTemplate(element);
+    const targetNode = targetPathNode.node;
+    const openingEl = targetNode.openingElement;
+
+    if (position === 'inside') {
+      if (openingEl.selfClosing) {
+        openingEl.selfClosing = false;
+        targetNode.closingElement = b.jsxClosingElement(openingEl.name);
+      }
+      if (!targetNode.children) {
+        targetNode.children = [];
+      }
+      targetNode.children.push(newASTNode);
+    } else if (position === 'before') {
+      const parentContainer = targetPathNode.parentPath && targetPathNode.parentPath.node;
+      if (parentContainer && Array.isArray(parentContainer.children)) {
+        const index = parentContainer.children.indexOf(targetNode);
+        if (index !== -1) {
+          parentContainer.children.splice(index, 0, newASTNode);
+        } else {
+          parentContainer.children.unshift(newASTNode);
+        }
+      } else {
+        // Fallback: insert inside at the beginning
+        if (!targetNode.children) targetNode.children = [];
+        targetNode.children.unshift(newASTNode);
+      }
+    } else if (position === 'after') {
+      const parentContainer = targetPathNode.parentPath && targetPathNode.parentPath.node;
+      if (parentContainer && Array.isArray(parentContainer.children)) {
+        const index = parentContainer.children.indexOf(targetNode);
+        if (index !== -1) {
+          parentContainer.children.splice(index + 1, 0, newASTNode);
+        } else {
+          parentContainer.children.push(newASTNode);
+        }
+      } else {
+        if (!targetNode.children) targetNode.children = [];
+        targetNode.children.push(newASTNode);
+      }
+    }
+
+    const { code: outputCode } = recast.print(ast);
+
+    try {
+      babelParser.parse(outputCode);
+    } catch (parseError) {
+      return res.status(400).json({
+        error: `AST syntax pre-validation failed for inserted element: ${parseError.message}`
+      });
+    }
+
+    createBackup(absolutePath);
+    fs.writeFileSync(absolutePath, outputCode, 'utf8');
+
+    res.json({ success: true, message: 'Element inserted successfully', prevCode: code, newCode: outputCode });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    console.error('AST Insert Error:', error);
+    res.status(status).json({ error: error.message });
+  }
+});
+
+// POST /api/delete-element - AST manipulation to delete a JSX element
+app.post('/api/delete-element', requireEditorSecret, (req, res) => {
+  const { file, line, column } = req.body;
+
+  if (!file || !line || !column) {
+    return res.status(400).json({ 
+      error: 'Missing required parameters (file, line, column)' 
+    });
+  }
+
+  try {
+    const absolutePath = resolveFilePath(file);
+    const code = fs.readFileSync(absolutePath, 'utf8');
+    const ast = recast.parse(code, { parser: babelParser });
+
+    let targetPathNode = null;
+    let minDistance = Infinity;
+
+    traverse(ast, {
+      JSXElement(jsxPath) {
+        const openingEl = jsxPath.node.openingElement;
+        const { loc } = openingEl;
+        if (!loc) return;
+
+        if (loc.start.line === parseInt(line)) {
+          const distance = Math.abs(loc.start.column - (parseInt(column) - 1));
+          if (distance < minDistance) {
+            minDistance = distance;
+            targetPathNode = jsxPath;
+          }
+        }
+      }
+    });
+
+    if (!targetPathNode) {
+      return res.status(404).json({ 
+        error: `Could not find JSX element on line ${line} in file ${file}` 
+      });
+    }
+
+    targetPathNode.remove();
+
+    const { code: outputCode } = recast.print(ast);
+
+    try {
+      babelParser.parse(outputCode);
+    } catch (parseError) {
+      return res.status(400).json({
+        error: `AST syntax pre-validation failed for element deletion: ${parseError.message}`
+      });
+    }
+
+    createBackup(absolutePath);
+    fs.writeFileSync(absolutePath, outputCode, 'utf8');
+
+    res.json({ success: true, message: 'Element deleted successfully', prevCode: code, newCode: outputCode });
+  } catch (error) {
+    const status = error.statusCode || 500;
+    console.error('AST Delete Error:', error);
+    res.status(status).json({ error: error.message });
+  }
+});
+
+// POST /api/write-file-content - Revert or apply full file content for structural undo/redo
+app.post('/api/write-file-content', requireEditorSecret, (req, res) => {
+  const { file, code } = req.body;
+  if (!file || typeof code !== 'string') {
+    return res.status(400).json({ error: 'Missing file or code parameters' });
+  }
+  try {
+    const absolutePath = resolveFilePath(file);
+    createBackup(absolutePath);
+    fs.writeFileSync(absolutePath, code, 'utf8');
+    res.json({ success: true });
+  } catch (err) {
+    console.error('Write file error:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Fallback to serve index.html for React Router
 app.get('*', (req, res) => {
   const indexPath = path.join(__dirname, '../dist/index.html');
